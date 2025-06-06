@@ -1,0 +1,14 @@
+[project]
+name = "hyground"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "hy>=1.1.0",
+    "hy-language-server>=0.0.6",
+    "jedhy",
+]
+
+[tool.uv.sources]
+jedhy = { git = "https://github.com/rinx/jedhy.git", rev = "update/hy-1.0a1" }
