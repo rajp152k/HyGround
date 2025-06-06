@@ -1,0 +1,3 @@
+#+title: HyGround
+
+ - was wondering what does it take to write an LSP server
