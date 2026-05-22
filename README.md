@@ -70,6 +70,8 @@ toolz.pipe
 
 Pure Python modules normally jump to their `.py` source. Builtin and C extension modules, such as `math` and `cmath`, do not expose Python implementation files; HyGround falls back to bundled typeshed `.pyi` stubs for these cases.
 
+When runtime importing is disabled or a workspace-local import fails, HyGround can statically parse workspace `.py`/`.pyi` files for top-level functions, classes, and variables. This keeps navigation and completion useful without executing module top-level code.
+
 Hy names are mapped to Python names when resolving imports and attributes:
 
 ```hy
@@ -166,6 +168,7 @@ For an installed package, use:
 - `index.py`: Hy document/workspace indexing, module names, and static Hy import bindings.
 - `config.py`: typed workspace configuration from `[tool.hyground]`.
 - `resolver.py`: workspace-scoped Python import, object, source, and stub resolution.
+- `python_static.py`: side-effect-free AST indexing for workspace Python modules.
 - `model.py`: shared symbol and source range model.
 - `word.py`: token, range, occurrence, and call-site utilities.
 - `completion_context.py`: lightweight import/require context detection for incomplete forms.
@@ -200,7 +203,7 @@ examples/smoke.hy
 - Hy project symbol lookup is module-aware for explicit `import` forms, but unqualified fallback lookup is still name-based.
 - References and rename are lexical/name-based and can produce false positives.
 - Diagnostics use best-effort ranges; many Hy reader/compiler exceptions do not expose full end positions yet.
-- Python object resolution may import modules when `allow-workspace-imports` is enabled. A richer static resolver is still needed for packages that are unsafe or expensive to import.
+- Python object resolution may import modules when `allow-workspace-imports` is enabled. Static Python fallback covers top-level workspace symbols, but does not attempt full type inference or arbitrary attribute flow.
 - Typeshed jumps target interface stubs, not C implementation source.
 - Hy core form documentation is currently explicit data in `core_docs.py`. This is a stopgap. The production path should derive these docs from Hy's own documentation/source metadata or an upstream-supported machine-readable source, so HyGround does not maintain a parallel manual table.
 
@@ -213,6 +216,6 @@ Work required to move from the current implementation to production-grade toolin
 3. Replace name-based references/rename with scoped symbol references.
 4. Improve diagnostic recovery for incomplete forms and enrich categories beyond reader/compiler errors.
 5. Continue expanding context-aware completions for keywords, attributes, macros, and reader macros.
-6. Add static Python source/stub resolution paths that do not import user modules by default.
+6. Expand static Python source/stub resolution beyond top-level workspace symbols.
 7. Expand configuration for multiple workspace roots, client-supplied settings, and per-feature resolver behavior.
 8. Publish versioned releases to PyPI and document editor integrations beyond Emacs.

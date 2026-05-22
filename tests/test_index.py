@@ -239,6 +239,49 @@ def test_hy_module_alias_dotted_resolution_and_completion(tmp_path) -> None:
     assert "L.helper" in completions
 
 
+def test_static_python_resolution_when_runtime_import_is_disabled(tmp_path) -> None:
+    root = tmp_path
+    main = root / "main.hy"
+    uri = uris.from_fs_path(str(main))
+    marker = root / "imported.txt"
+    (root / "pyproject.toml").write_text(
+        "[project]\nname = 'x'\n"
+        "[tool.hyground]\nallow-workspace-imports = false\n"
+    )
+    (root / "safe_lib.py").write_text(
+        '"Module docs"\n'
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('imported')\n"
+        "def hello_world(value: int = 1) -> int:\n"
+        "    \"Hello docs\"\n"
+        "    return value\n"
+        "class Thing:\n"
+        "    \"Thing docs\"\n"
+        "    pass\n"
+        "ANSWER = 42\n"
+    )
+
+    index = WorkspaceIndex()
+    index.update_document(uri, "(import safe-lib)\nsafe-lib.hello-world\n")
+
+    assert not marker.exists()
+
+    module = index.resolve(uri, "safe-lib")
+    assert module is not None
+    assert "Module docs" in module.documentation
+
+    hello = index.resolve(uri, "safe-lib.hello-world")
+    assert hello is not None
+    assert hello.documentation == "Hello docs"
+    assert "value: int=1" in hello.signature
+    assert "-> int" in hello.signature
+    assert hello.source is not None
+    assert hello.source.uri.endswith("safe_lib.py")
+
+    attrs = {symbol.name for symbol in index.symbols_for_completion(uri, "safe-lib.he")}
+    assert "safe-lib.hello-world" in attrs
+
+
 def test_reindex_root_refreshes_project_files_and_python_imports(tmp_path) -> None:
     root = tmp_path
     main = root / "main.hy"

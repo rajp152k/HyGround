@@ -89,7 +89,10 @@ def test_workspace_imports_can_be_disabled(tmp_path) -> None:
     index = WorkspaceIndex()
     index.update_document(uri, "(import unsafe-lib [boom])\n")
 
-    assert index.resolve(uri, "boom") is None
+    boom = index.resolve(uri, "boom")
+    assert boom is not None
+    assert boom.source is not None
+    assert boom.source.uri.endswith("unsafe_lib.py")
     assert not marker.exists()
 
 

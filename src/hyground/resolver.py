@@ -24,6 +24,13 @@ from typeshed_client import get_stub_file
 
 from .config import DEFAULT_EXCLUDE_DIRS, HyGroundConfig
 from .model import SourceRange, SymbolInfo, SymbolKind
+from .python_static import (
+    StaticPythonModule,
+    load_static_python_module,
+    member_symbol_from_static_module,
+    member_symbols_from_static_module,
+    module_symbol_from_static_module,
+)
 
 _IGNORED_DIRS = set(DEFAULT_EXCLUDE_DIRS)
 
@@ -37,6 +44,7 @@ class PythonResolver:
         self.search_paths = _search_paths(root, include_root=self.config.allow_workspace_imports)
         self._module_cache: dict[str, ModuleType | None] = {}
         self._object_cache: dict[str, object | None] = {}
+        self._static_module_cache: dict[str, StaticPythonModule | None] = {}
         self._top_level_modules: list[str] | None = None
 
     @contextmanager
@@ -134,22 +142,49 @@ class PythonResolver:
 
     def module_symbol(self, visible_name: str, module_name: str) -> SymbolInfo | None:
         module = self.import_module(module_name)
-        if module is None:
-            return None
-        return symbol_from_object(visible_name, module, detail=f"Python module {module_name}")
+        if module is not None:
+            return symbol_from_object(visible_name, module, detail=f"Python module {module_name}")
+        return self.static_module_symbol(visible_name, module_name)
 
     def object_symbol(self, visible_name: str, qualified_name: str) -> SymbolInfo | None:
         obj = self.resolve_qualified(qualified_name)
-        if obj is None:
+        if obj is not None:
+            return symbol_from_object(visible_name, obj, detail=f"Python object {qualified_name}")
+        module_name, _, member_name = qualified_name.rpartition(".")
+        if module_name and member_name:
+            return self.static_member_symbol(visible_name, module_name, member_name)
+        return None
+
+    def static_module(self, module_name: str) -> StaticPythonModule | None:
+        python_module_name = _python_qualified_name(module_name)
+        if python_module_name not in self._static_module_cache:
+            self._static_module_cache[python_module_name] = load_static_python_module(self.root, module_name)
+        return self._static_module_cache[python_module_name]
+
+    def static_module_symbol(self, visible_name: str, module_name: str) -> SymbolInfo | None:
+        module = self.static_module(module_name)
+        if module is None:
             return None
-        return symbol_from_object(visible_name, obj, detail=f"Python object {qualified_name}")
+        return module_symbol_from_static_module(module, visible_name)
+
+    def static_member_symbol(self, visible_name: str, module_name: str, member_name: str) -> SymbolInfo | None:
+        module = self.static_module(module_name)
+        if module is None:
+            return None
+        return member_symbol_from_static_module(module, visible_name, member_name)
+
+    def static_member_symbols(self, module_name: str, prefix: str = "", visible_base: str = "") -> list[SymbolInfo]:
+        module = self.static_module(module_name)
+        if module is None:
+            return []
+        return member_symbols_from_static_module(module, prefix, visible_base)
 
     def module_candidates(self, prefix: str) -> list[SymbolInfo]:
         """Return importable modules visible from this workspace."""
         if "." in prefix:
             return self._dotted_module_candidates(prefix)
-        return [
-            SymbolInfo(
+        candidates: dict[str, SymbolInfo] = {
+            name: SymbolInfo(
                 name=name,
                 kind=SymbolKind.MODULE,
                 detail="importable Python module",
@@ -158,7 +193,35 @@ class PythonResolver:
             )
             for name in self.top_level_modules()
             if name.startswith(prefix)
-        ]
+        }
+        for name in self.static_top_level_modules(prefix):
+            candidates.setdefault(
+                name,
+                SymbolInfo(
+                    name=name,
+                    kind=SymbolKind.MODULE,
+                    detail="workspace Python module (static)",
+                    documentation=f"Workspace Python module `{hy.mangle(name)}`.",
+                    module=name,
+                ),
+            )
+        return sorted(candidates.values(), key=lambda symbol: symbol.name)
+
+    def static_top_level_modules(self, prefix: str = "") -> list[str]:
+        seen: set[str] = set()
+        try:
+            children = list(self.root.iterdir())
+        except OSError:
+            return []
+        for child in children:
+            name = ""
+            if child.is_file() and child.suffix in {".py", ".pyi"} and child.stem != "__init__":
+                name = hy.unmangle(child.stem)
+            elif child.is_dir() and any((child / init).exists() for init in ("__init__.py", "__init__.pyi")):
+                name = hy.unmangle(child.name)
+            if name and not name.startswith("_") and name.startswith(prefix):
+                seen.add(name)
+        return sorted(seen)
 
     def _dotted_module_candidates(self, prefix: str) -> list[SymbolInfo]:
         base_name, _, attr_prefix = prefix.rpartition(".")
@@ -190,7 +253,7 @@ class PythonResolver:
         """Return importable members of MODULE_NAME labelled by member name."""
         module = self.import_module(module_name)
         if module is None:
-            return []
+            return self.static_member_symbols(module_name, prefix)
         names = getattr(module, "__all__", None) or dir(module)
         symbols: list[SymbolInfo] = []
         for py_name in names:

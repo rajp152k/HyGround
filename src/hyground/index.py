@@ -485,6 +485,13 @@ class WorkspaceIndex:
             hy_symbols = self._hy_module_attribute_symbols(uri, base.module, base_name, attr_prefix)
             if hy_symbols:
                 return hy_symbols
+            static_symbols = self.resolver_for_root(self.root_for_uri(uri)).static_member_symbols(
+                base.module,
+                attr_prefix,
+                visible_base=base_name,
+            )
+            if static_symbols:
+                return static_symbols
         if base is None:
             root = self.root_for_uri(uri)
             obj = self.resolver_for_root(root).resolve_qualified(base_name)
@@ -637,6 +644,15 @@ class WorkspaceIndex:
 
         base_name, _, rest = name.partition(".")
         base = self.resolve(uri, base_name) if base_name != name else None
+        if base is not None and base.kind == SymbolKind.MODULE and base.module:
+            static_symbol = self.resolver_for_root(self.root_for_uri(uri)).static_member_symbol(
+                name,
+                base.module,
+                rest,
+            )
+            if static_symbol is not None:
+                return static_symbol
+
         obj = base.runtime_object if base and base.runtime_object is not None else None
         if obj is not None:
             try:
