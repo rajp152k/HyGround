@@ -236,6 +236,8 @@ The same `SymbolInfo` model feeds completion, hover, definition, symbols, refere
 
 ## Development
 
+See also [CONTRIBUTING.md](CONTRIBUTING.md) and [CHANGELOG.md](CHANGELOG.md).
+
 ```bash
 uv sync
 uv run pytest -q
