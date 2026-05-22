@@ -232,6 +232,9 @@ json.du
         client.did_open(uri, source)
         diagnostics = client.wait_notification("textDocument/publishDiagnostics")
         assert diagnostics["params"]["uri"] == uri
+        for diagnostic in diagnostics["params"]["diagnostics"]:
+            assert diagnostic["source"] == "hyground"
+            assert diagnostic["code"] in {"hy-reader", "hy-compiler"}
 
         lfor_completion = client.request(
             "textDocument/completion",
