@@ -187,7 +187,7 @@ The test suite contains:
 
 - unit tests for Hy indexing, Python resolution, reindexing, and word utilities
 - end-to-end stdio LSP tests that launch `hyground` and speak JSON-RPC
-- CI coverage for Python 3.10, 3.11, 3.12, 3.13, and 3.14; Hy version-grid coverage from Hy 1.2.0 onward is tracked separately
+- CI coverage for Python 3.10, 3.11, 3.12, 3.13, and 3.14, plus a focused Hy compatibility job for Hy 1.2.0 and latest Hy on Python 3.12
 
 Smoke file:
 

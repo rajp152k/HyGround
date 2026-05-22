@@ -25,3 +25,32 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} pytest -q
       - name: Build package
         run: uv build
+
+  hy-compat:
+    name: Hy ${{ matrix.hy-version }} on Python 3.12
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        hy-version: ["1.2.0", "latest"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install 3.12
+      - name: Sync dependencies
+        run: uv sync --dev --python 3.12
+      - name: Select Hy version
+        run: |
+          if [ "${{ matrix.hy-version }}" = "latest" ]; then
+            uv pip install --python .venv/bin/python --upgrade 'hy>=1.2.0'
+          else
+            uv pip install --python .venv/bin/python "hy==${{ matrix.hy-version }}"
+          fi
+          uv run --no-sync python -c "import hy; print('Hy', hy.__version__)"
+      - name: Run tests
+        run: uv run --no-sync pytest -q
+      - name: Compile sources
+        run: uv run --no-sync python -m py_compile src/hyground/*.py tests/*.py
