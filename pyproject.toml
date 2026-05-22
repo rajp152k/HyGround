@@ -1,10 +1,10 @@
 [project]
 name = "hyground"
 version = "0.1.0"
-description = "A principled Hy language server with Python interop"
+description = "Language server for Hy with Python interop"
 readme = "README.md"
 authors = [
-    { name = "Raj", email = "rajp152k@gmail.com" }
+    { name = "Raj" }
 ]
 license = "MIT"
 keywords = ["hy", "hylang", "lsp", "language-server", "python"]

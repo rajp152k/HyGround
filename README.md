@@ -1,71 +1,107 @@
 # HyGround
 
-HyGround is a principled language server for [Hy](https://hylang.org/) with first-class Python interop.
+HyGround is a language server for [Hy](https://hylang.org/). It provides LSP features for Hy source files and resolves Python objects from the active workspace, including project-local modules and virtual environments.
 
-It is a clean rewrite inspired by Hyuga's useful ideas, but built around an explicit local symbol model: each server instance owns its workspace/document indexes, and completion, hover, definition, symbols, and references all read from the same model.
+The server runs over stdio and keeps its index in the server instance. It does not use process-global symbol registries.
 
-## Current features
+## Status
 
-- stdio LSP server via `hyground`
-- Hy parse diagnostics and basic compile diagnostics
-- completion for:
-  - Hy core forms (`if`, `lfor`, `setv`, `defn`, ...)
-  - Python builtins
-  - importable Python modules
-  - imported Python objects and module attributes
-  - local `defn`, `defmacro`, `defclass`, `setv`
-  - project-local Hy definitions across files
-- hover docs for:
-  - Hy core forms via explicit Hy docs provider
-  - Python runtime objects via `inspect`
-  - local Hy docstrings
-- go-to-definition for:
-  - local Hy definitions
-  - project-local Hy definitions
-  - imported Python modules/classes/functions when `inspect` can locate source
-  - bundled typeshed stubs for C/builtin modules like `math` and `cmath`
-- document symbols and workspace symbols
-- simple references across indexed Hy files
-- signature help for indexed Hy/Python callables
-- prepare-rename and rename edits for local Hy symbols
-- explicit workspace reindex command: `hyground.reindexWorkspace`
+Alpha. HyGround is usable for local development, but the indexing and resolution model is still evolving.
 
-## Install / run
+## Installation
 
-During early development, run directly from GitHub:
+Run from GitHub:
 
 ```bash
 uvx --from git+https://github.com/rajp152k/HyGround hyground
 ```
 
-From a local checkout:
+Run from a local checkout:
 
 ```bash
-uv run hyground --version
 uv run hyground
 ```
 
-The eventual stable path is:
+After a PyPI release, the intended install commands are:
 
 ```bash
 uvx hyground
-```
-
-or:
-
-```bash
 pipx install hyground
 ```
 
+## LSP capabilities
+
+| Capability | Status | Notes |
+| --- | --- | --- |
+| `textDocument/completion` | supported | Hy forms, Python builtins, importable modules, imported members, dotted attributes, local/project Hy symbols |
+| `textDocument/hover` | supported | Python docs from `inspect`, local Hy docstrings, provisional Hy form docs |
+| `textDocument/definition` | supported | Local/project Hy definitions, Python source via `inspect`, typeshed fallback for builtins/C extensions |
+| `textDocument/documentSymbol` | supported | Definitions in the current Hy document |
+| `workspace/symbol` | supported | Indexed Hy definitions across the workspace |
+| `textDocument/references` | partial | Name-based references across indexed Hy files |
+| `textDocument/signatureHelp` | partial | Available when a signature is known from HyGround's symbol model or `inspect` |
+| `textDocument/rename` | partial | Local Hy symbols only; implemented as name-based workspace edits |
+| `textDocument/publishDiagnostics` | partial | Hy reader diagnostics and basic compile diagnostics |
+| `workspace/executeCommand` | supported | `hyground.reindexWorkspace` |
+
+## Python resolution
+
+HyGround resolves Python objects using the current workspace root and common virtual environment locations:
+
+- project root
+- `.venv/lib/python*/site-packages`
+- `venv/lib/python*/site-packages`
+
+Supported examples:
+
+```hy
+(import pathlib [Path])
+(Path ".")
+
+(import toolz)
+toolz.pipe
+
+(import math)
+(math.sqrt 4)
+```
+
+Pure Python modules normally jump to their `.py` source. Builtin and C extension modules, such as `math` and `cmath`, do not expose Python implementation files; HyGround falls back to bundled typeshed `.pyi` stubs for these cases.
+
+Hy names are mapped to Python names when resolving imports and attributes:
+
+```hy
+(import local-lib)
+(local-lib.make-thing 1) ; resolves local_lib.make_thing
+```
+
+## Reindexing
+
+HyGround indexes open buffers and project `.hy` files. If files, imports, or virtual environment packages change while the server is running, request a fresh index:
+
+```json
+{
+  "command": "hyground.reindexWorkspace",
+  "arguments": ["file:///path/to/current-buffer.hy"]
+}
+```
+
+In Emacs/lsp-mode:
+
+```elisp
+(lsp-send-execute-command "hyground.reindexWorkspace" (vector (lsp--buffer-uri)))
+```
+
+The command clears Python resolver caches, rebuilds open Hy buffers from editor text, rereads project `.hy` files from disk, and republishes diagnostics.
+
 ## Emacs / lsp-mode
 
-Development checkout command:
+Development checkout configuration:
 
 ```elisp
 (require 'lsp-mode)
 
-(defcustom tbm/hyground-command
-  '("uv" "--directory" "/home/tbm/source/vcops/hylang/HyGround-Dev/HyGround" "run" "hyground")
+(defcustom hyground-command
+  '("uv" "--directory" "/path/to/HyGround" "run" "hyground")
   "Command used to start HyGround."
   :type '(repeat string))
 
@@ -73,7 +109,7 @@ Development checkout command:
 
 (lsp-register-client
  (make-lsp-client
-  :new-connection (lsp-stdio-connection (lambda () tbm/hyground-command))
+  :new-connection (lsp-stdio-connection (lambda () hyground-command))
   :major-modes '(hy-mode)
   :activation-fn (lsp-activate-on "hy")
   :priority 20
@@ -82,33 +118,22 @@ Development checkout command:
 (add-hook 'hy-mode-hook #'lsp-deferred)
 ```
 
-Once published or installed globally, change the command to:
+For an installed package, use:
 
 ```elisp
-(setq tbm/hyground-command '("uvx" "hyground"))
+(setq hyground-command '("uvx" "hyground"))
 ```
-
-If jump/hover data feels stale after adding files, changing imports, or installing
-packages into `.venv`, force a fresh index:
-
-```elisp
-(lsp-send-execute-command "hyground.reindexWorkspace" (vector (lsp--buffer-uri)))
-```
-
-This rebuilds the current workspace's Hy index and clears Python import/source
-resolution caches.
 
 ## Architecture
 
-HyGround separates the server into local, testable parts:
+- `server.py`: pygls feature registration and LSP request handlers.
+- `index.py`: Hy document/workspace indexing.
+- `resolver.py`: workspace-scoped Python import, object, source, and stub resolution.
+- `model.py`: shared symbol and source range model.
+- `word.py`: token, range, occurrence, and call-site utilities.
+- `core_docs.py`: temporary Hy form documentation provider.
 
-- `model.py`: shared `SymbolInfo` / source ranges.
-- `core_docs.py`: explicit docs for Hy compiler forms that don't have useful Python `__doc__`.
-- `resolver.py`: workspace-scoped Python import/object/source resolution.
-- `index.py`: document/workspace indexing from Hy forms.
-- `server.py`: thin pygls LSP adapter.
-
-This keeps Hy/Python facts local to a workspace index instead of hiding them in mutable process-global registries.
+The same `SymbolInfo` model feeds completion, hover, definition, symbols, references, signature help, and rename.
 
 ## Development
 
@@ -120,8 +145,36 @@ uv build
 uv run hyground --version
 ```
 
-The test suite includes unit tests for parsing/indexing/resolution, word utilities,
-and end-to-end stdio LSP tests that speak JSON-RPC to a real `hyground` server.
-CI runs the same suite across Python 3.10-3.13.
+The test suite contains:
 
-Smoke file: `examples/smoke.hy`.
+- unit tests for Hy indexing, Python resolution, reindexing, and word utilities
+- end-to-end stdio LSP tests that launch `hyground` and speak JSON-RPC
+- CI coverage for Python 3.10, 3.11, 3.12, 3.13, and 3.14
+
+Smoke file:
+
+```bash
+examples/smoke.hy
+```
+
+## Known limitations
+
+- Hy project symbol lookup is currently name-based, not module-aware.
+- References and rename are lexical/name-based and can produce false positives.
+- Diagnostics use coarse ranges for many Hy reader/compiler errors.
+- Python object resolution imports modules. A static resolver is needed for packages that are unsafe or expensive to import.
+- Typeshed jumps target interface stubs, not C implementation source.
+- Hy core form documentation is currently explicit data in `core_docs.py`. This is a stopgap. The production path should derive these docs from Hy's own documentation/source metadata or an upstream-supported machine-readable source, so HyGround does not maintain a parallel manual table.
+
+## Roadmap
+
+Work required to move from the current implementation to production-grade tooling:
+
+1. Replace manual Hy core-form documentation with generated or upstream-provided documentation data.
+2. Make Hy symbol resolution module-aware, including imports, requires, aliases, and shadowing.
+3. Replace name-based references/rename with scoped symbol references.
+4. Improve diagnostics with precise ranges, stable error categories, and recovery for incomplete forms.
+5. Add context-aware completions for import/require forms, keywords, attributes, and macros.
+6. Add static Python source/stub resolution paths that do not import user modules by default.
+7. Add configuration for workspace roots, indexing limits, excluded paths, and resolver behavior.
+8. Publish versioned releases to PyPI and document editor integrations beyond Emacs.
