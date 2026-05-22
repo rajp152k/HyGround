@@ -97,7 +97,9 @@ class PythonResolver:
         return symbol_from_object(visible_name, obj, detail=f"Python object {qualified_name}")
 
     def module_candidates(self, prefix: str) -> list[SymbolInfo]:
-        """Return importable top-level modules visible from this workspace."""
+        """Return importable modules visible from this workspace."""
+        if "." in prefix:
+            return self._dotted_module_candidates(prefix)
         return [
             SymbolInfo(
                 name=name,
@@ -108,6 +110,98 @@ class PythonResolver:
             for name in self.top_level_modules()
             if name.startswith(prefix)
         ]
+
+    def _dotted_module_candidates(self, prefix: str) -> list[SymbolInfo]:
+        base_name, _, attr_prefix = prefix.rpartition(".")
+        base = self.resolve_qualified(base_name)
+        if base is None:
+            return []
+        candidates: dict[str, SymbolInfo] = {}
+
+        module_path = getattr(base, "__path__", None)
+        if module_path is not None:
+            with self.import_context():
+                for module in pkgutil.iter_modules(module_path, prefix=f"{hy.mangle(base_name)}."):
+                    name = hy.unmangle(module.name)
+                    if name.startswith(prefix):
+                        candidates[name] = SymbolInfo(
+                            name=name,
+                            kind=SymbolKind.MODULE,
+                            detail="importable Python module",
+                            documentation=f"Importable Python module `{module.name}`.",
+                        )
+
+        for symbol in self.attr_symbols(base_name, base, attr_prefix):
+            if symbol.kind == SymbolKind.MODULE:
+                candidates.setdefault(symbol.name, symbol)
+        return sorted(candidates.values(), key=lambda symbol: symbol.name)
+
+    def member_candidates(self, module_name: str, prefix: str) -> list[SymbolInfo]:
+        """Return importable members of MODULE_NAME labelled by member name."""
+        module = self.import_module(module_name)
+        if module is None:
+            return []
+        names = getattr(module, "__all__", None) or dir(module)
+        symbols: list[SymbolInfo] = []
+        for py_name in names:
+            if py_name.startswith("_") and not prefix.startswith("_"):
+                continue
+            hy_name = hy.unmangle(py_name)
+            if not hy_name.startswith(prefix) and not py_name.startswith(prefix):
+                continue
+            try:
+                obj = getattr(module, py_name)
+            except Exception:
+                continue
+            symbols.append(symbol_from_object(hy_name, obj, detail=f"member of {module_name}"))
+        return sorted(symbols, key=lambda symbol: symbol.name)
+
+    def macro_candidates(self, module_name: str, prefix: str = "", dotted_prefix: str = "") -> list[SymbolInfo]:
+        """Return regular macros exported by MODULE_NAME."""
+        module = self.import_module(module_name)
+        if module is None:
+            return []
+        symbols: list[SymbolInfo] = []
+        for py_name, obj in _macro_entries(module):
+            hy_name = hy.unmangle(py_name)
+            visible = f"{dotted_prefix}.{hy_name}" if dotted_prefix else hy_name
+            if not visible.startswith(prefix) and not hy_name.startswith(prefix):
+                continue
+            symbols.append(_symbol_from_macro(visible, obj, f"required macro from {module_name}"))
+        return sorted(symbols, key=lambda symbol: symbol.name)
+
+    def macro_symbol(self, visible_name: str, module_name: str, macro_name: str) -> SymbolInfo | None:
+        module = self.import_module(module_name)
+        if module is None:
+            return None
+        macros = getattr(module, "_hy_macros", {})
+        obj = macros.get(hy.mangle(macro_name))
+        if obj is None:
+            return None
+        return _symbol_from_macro(visible_name, obj, f"required macro from {module_name}")
+
+    def reader_macro_candidates(self, module_name: str, prefix: str = "", include_hash: bool = False) -> list[SymbolInfo]:
+        """Return reader macros exported by MODULE_NAME."""
+        module = self.import_module(module_name)
+        if module is None:
+            return []
+        symbols: list[SymbolInfo] = []
+        for name, obj in _reader_macro_entries(module):
+            visible = f"#{name}" if include_hash else name
+            if not visible.startswith(prefix) and not name.startswith(prefix):
+                continue
+            symbols.append(_symbol_from_macro(visible, obj, f"reader macro from {module_name}", reader=True))
+        return sorted(symbols, key=lambda symbol: symbol.name)
+
+    def reader_macro_symbol(self, visible_name: str, module_name: str, reader_name: str) -> SymbolInfo | None:
+        module = self.import_module(module_name)
+        if module is None:
+            return None
+        readers = getattr(module, "_hy_reader_macros", {})
+        obj = readers.get(reader_name)
+        if obj is None:
+            return None
+        return _symbol_from_macro(visible_name, obj, f"reader macro from {module_name}", reader=True)
 
     def top_level_modules(self) -> list[str]:
         if self._top_level_modules is None:
@@ -146,6 +240,45 @@ def symbol_from_object(name: str, obj: object, detail: str = "Python object") ->
         documentation=inspect.getdoc(obj) or "",
         source=_source_for_object(obj),
         runtime_object=obj,
+    )
+
+
+def _symbol_from_macro(name: str, obj: object, detail: str, reader: bool = False) -> SymbolInfo:
+    return SymbolInfo(
+        name=name,
+        kind=SymbolKind.READER_MACRO if reader else SymbolKind.LOCAL_MACRO,
+        detail=detail,
+        signature=_signature(obj),
+        documentation=inspect.getdoc(obj) or "",
+        source=_source_for_object(obj),
+        runtime_object=obj,
+    )
+
+
+def _macro_entries(module: ModuleType) -> list[tuple[str, object]]:
+    macros = getattr(module, "_hy_macros", {})
+    if not isinstance(macros, dict):
+        return []
+    exports = getattr(module, "_hy_export_macros", None)
+    names = exports if exports is not None else [name for name in macros if not name.startswith("_")]
+    out: list[tuple[str, object]] = []
+    for name in names:
+        if not isinstance(name, str):
+            continue
+        obj = macros.get(hy.mangle(hy.unmangle(name))) or macros.get(name)
+        if obj is not None:
+            out.append((hy.mangle(hy.unmangle(name)), obj))
+    return out
+
+
+def _reader_macro_entries(module: ModuleType) -> list[tuple[str, object]]:
+    readers = getattr(module, "_hy_reader_macros", {})
+    if not isinstance(readers, dict):
+        return []
+    return sorted(
+        (name, obj)
+        for name, obj in readers.items()
+        if isinstance(name, str) and not name.startswith("_")
     )
 
 

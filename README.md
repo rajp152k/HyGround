@@ -33,7 +33,7 @@ pipx install hyground
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| `textDocument/completion` | supported | Hy forms, Python builtins, importable modules, imported members, dotted attributes, local/project Hy symbols |
+| `textDocument/completion` | supported | Hy forms, Python builtins, import/require-aware modules and members, dotted attributes, local/project Hy symbols |
 | `textDocument/hover` | supported | Python docs from `inspect`, local Hy docstrings, provisional Hy form docs |
 | `textDocument/definition` | supported | Local/project Hy definitions, Python source via `inspect`, typeshed fallback for builtins/C extensions |
 | `textDocument/documentSymbol` | supported | Definitions in the current Hy document |
@@ -63,6 +63,9 @@ toolz.pipe
 
 (import math)
 (math.sqrt 4)
+
+(import math *)
+(sqrt 4)
 ```
 
 Pure Python modules normally jump to their `.py` source. Builtin and C extension modules, such as `math` and `cmath`, do not expose Python implementation files; HyGround falls back to bundled typeshed `.pyi` stubs for these cases.
@@ -73,6 +76,16 @@ Hy names are mapped to Python names when resolving imports and attributes:
 (import local-lib)
 (local-lib.make-thing 1) ; resolves local_lib.make_thing
 ```
+
+## Import and require completion
+
+HyGround understands mixed `import` forms with module aliases, member lists, member aliases, and star imports. Completion inside an import member list is scoped to that module:
+
+```hy
+(import os.path [ex|]) ; suggests exists
+```
+
+`require` indexing covers module aliases, selected macros, star macros, `:macros`, and `:readers` forms where the macro module can be imported from the workspace. Reader macros are represented as `#name` symbols internally.
 
 ## Reindexing
 
@@ -131,6 +144,7 @@ For an installed package, use:
 - `resolver.py`: workspace-scoped Python import, object, source, and stub resolution.
 - `model.py`: shared symbol and source range model.
 - `word.py`: token, range, occurrence, and call-site utilities.
+- `completion_context.py`: lightweight import/require context detection for incomplete forms.
 - `core_docs.py`: temporary Hy form documentation provider.
 
 The same `SymbolInfo` model feeds completion, hover, definition, symbols, references, signature help, and rename.
@@ -174,7 +188,7 @@ Work required to move from the current implementation to production-grade toolin
 2. Make Hy symbol resolution module-aware, including imports, requires, aliases, and shadowing.
 3. Replace name-based references/rename with scoped symbol references.
 4. Improve diagnostics with precise ranges, stable error categories, and recovery for incomplete forms.
-5. Add context-aware completions for import/require forms, keywords, attributes, and macros.
+5. Continue expanding context-aware completions for keywords, attributes, macros, and reader macros.
 6. Add static Python source/stub resolution paths that do not import user modules by default.
 7. Add configuration for workspace roots, indexing limits, excluded paths, and resolver behavior.
 8. Publish versioned releases to PyPI and document editor integrations beyond Emacs.

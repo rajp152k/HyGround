@@ -202,6 +202,7 @@ def test_lsp_end_to_end_features(tmp_path: Path) -> None:
 (import math)
 (import cmath)
 (import local-lib)
+(import os.path [ex])
 
 (defn foo [x]
   "Foo docs from e2e"
@@ -241,6 +242,12 @@ json.du
             text_document_position(uri, source, "json.du", len("json.du")),
         )
         assert "json.dumps" in completion_labels(json_completion)
+
+        import_member_completion = client.request(
+            "textDocument/completion",
+            text_document_position(uri, source, "[ex", len("[ex")),
+        )
+        assert "exists" in completion_labels(import_member_completion)
 
         lfor_hover = client.request(
             "textDocument/hover",

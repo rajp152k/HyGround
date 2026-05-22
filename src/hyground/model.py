@@ -14,6 +14,7 @@ class SymbolKind(str, Enum):
     PYTHON_BUILTIN = "python-builtin"
     LOCAL_FUNCTION = "local-function"
     LOCAL_MACRO = "local-macro"
+    READER_MACRO = "reader-macro"
     LOCAL_CLASS = "local-class"
     LOCAL_VARIABLE = "local-variable"
     MODULE = "module"

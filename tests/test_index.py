@@ -1,6 +1,7 @@
 from pygls import uris
 
 from hyground.index import WorkspaceIndex
+from hyground.model import SymbolKind
 
 URI = "file:///workspace/main.hy"
 
@@ -103,6 +104,54 @@ def test_importable_module_completion() -> None:
 
     candidates = names(index, "pathli")
     assert "pathlib" in candidates
+
+
+def test_star_import_records_public_members() -> None:
+    index = build("(import math *)\n(sqrt 4)\n")
+
+    sqrt = index.resolve(URI, "sqrt")
+    assert sqrt is not None
+    assert "square root" in sqrt.documentation
+    assert sqrt.source is not None
+    assert sqrt.source.uri.endswith("math.pyi")
+
+
+def test_require_records_alias_star_selected_and_reader_macros(tmp_path) -> None:
+    root = tmp_path
+    main = root / "main.hy"
+    uri = uris.from_fs_path(str(main))
+    (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (root / "macros.hy").write_text(
+        '(defmacro zap []\n  "Zap docs"\n  1)\n'
+        '(defmacro zip []\n  "Zip docs"\n  1)\n'
+        '(defreader bang []\n  "Bang docs"\n  1)\n'
+    )
+
+    index = WorkspaceIndex()
+    index.update_document(
+        uri,
+        "(require macros :as M)\n"
+        "(require macros [zap :as zap-alias])\n"
+        "(require macros *)\n"
+        "(require macros :readers [bang])\n",
+    )
+
+    prefixed = index.resolve(uri, "M.zap")
+    assert prefixed is not None
+    assert prefixed.documentation == "Zap docs"
+
+    alias = index.resolve(uri, "zap-alias")
+    assert alias is not None
+    assert alias.documentation == "Zap docs"
+
+    star = index.resolve(uri, "zip")
+    assert star is not None
+    assert star.documentation == "Zip docs"
+
+    reader = index.resolve(uri, "#bang")
+    assert reader is not None
+    assert reader.kind == SymbolKind.READER_MACRO
+    assert "reader macro" in reader.detail
 
 
 def test_hyphenated_import_member_aliases(tmp_path) -> None:
