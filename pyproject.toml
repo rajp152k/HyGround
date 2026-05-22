@@ -39,3 +39,10 @@ build-backend = "hatchling.build"
 dev = [
     "pytest>=9.0.3",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+    "e2e: starts the HyGround LSP over stdio and speaks JSON-RPC",
+]

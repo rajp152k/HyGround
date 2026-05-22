@@ -1,4 +1,4 @@
-from hyground.word import enclosing_call, occurrences, word_at, word_prefix
+from hyground.word import enclosing_call, occurrences, word_at, word_prefix, word_range_at
 
 
 def test_word_prefix_and_word_at() -> None:
@@ -6,6 +6,7 @@ def test_word_prefix_and_word_at() -> None:
 
     assert word_prefix(source, 0, 3) == "lf"
     assert word_at(source, 0, 2) == "lfor"
+    assert word_range_at(source, 0, 2) == (1, 5)
 
 
 def test_occurrences() -> None:

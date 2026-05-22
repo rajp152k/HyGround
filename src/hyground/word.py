@@ -20,11 +20,20 @@ def line_word_prefix(line: str, character: int) -> str:
 
 def line_word_at(line: str, character: int) -> str:
     """Return the full symbol under CHARACTER on LINE."""
+    found = line_word_range_at(line, character)
+    if found is None:
+        return ""
+    start, end = found
+    return line[start:end]
+
+
+def line_word_range_at(line: str, character: int) -> tuple[int, int] | None:
+    """Return the ``(start, end)`` range of the symbol under CHARACTER."""
     character = max(0, min(character, len(line)))
     for match in WORD_RE.finditer(line):
         if match.start() <= character <= match.end():
-            return match.group(0)
-    return ""
+            return match.start(), match.end()
+    return None
 
 
 def word_prefix(source: str, line: int, character: int) -> str:
@@ -39,6 +48,13 @@ def word_at(source: str, line: int, character: int) -> str:
     if not 0 <= line < len(lines):
         return ""
     return line_word_at(lines[line], character)
+
+
+def word_range_at(source: str, line: int, character: int) -> tuple[int, int] | None:
+    lines = source.splitlines()
+    if not 0 <= line < len(lines):
+        return None
+    return line_word_range_at(lines[line], character)
 
 
 def occurrences(source: str, name: str) -> list[tuple[int, int, int]]:

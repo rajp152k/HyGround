@@ -46,14 +46,17 @@ class PythonResolver:
             sys.path[:] = old_path
 
     def import_module(self, module_name: str) -> ModuleType | None:
-        if module_name in self._module_cache:
-            return self._module_cache[module_name]
+        python_module_name = _python_qualified_name(module_name)
+        cache_key = python_module_name
+        if cache_key in self._module_cache:
+            return self._module_cache[cache_key]
         try:
+            importlib.invalidate_caches()
             with self.import_context():
-                module = importlib.import_module(module_name)
+                module = importlib.import_module(python_module_name)
         except Exception:
             module = None
-        self._module_cache[module_name] = module
+        self._module_cache[cache_key] = module
         return module
 
     def resolve_qualified(self, qualified_name: str) -> object | None:
@@ -174,6 +177,10 @@ def _search_paths(root: Path) -> list[Path]:
             if site_packages.exists():
                 paths.append(site_packages)
     return paths
+
+
+def _python_qualified_name(name: str) -> str:
+    return ".".join(hy.mangle(part) for part in name.split("."))
 
 
 def _kind_for_object(obj: object) -> SymbolKind:

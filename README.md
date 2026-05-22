@@ -23,9 +23,10 @@ It is a clean rewrite inspired by Hyuga's useful ideas, but built around an expl
   - local Hy definitions
   - project-local Hy definitions
   - imported Python modules/classes/functions when `inspect` can locate source
-- document symbols for local definitions
+- document symbols and workspace symbols
 - simple references across indexed Hy files
 - signature help for indexed Hy/Python callables
+- prepare-rename and rename edits for local Hy symbols
 - explicit workspace reindex command: `hyground.reindexWorkspace`
 
 ## Install / run
@@ -113,7 +114,13 @@ This keeps Hy/Python facts local to a workspace index instead of hiding them in 
 ```bash
 uv sync
 uv run pytest -q
+uv run python -m py_compile src/hyground/*.py tests/*.py
+uv build
 uv run hyground --version
 ```
+
+The test suite includes unit tests for parsing/indexing/resolution, word utilities,
+and end-to-end stdio LSP tests that speak JSON-RPC to a real `hyground` server.
+CI runs the same suite across Python 3.10-3.13.
 
 Smoke file: `examples/smoke.hy`.

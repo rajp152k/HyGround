@@ -8,7 +8,7 @@ from pygls.lsp.server import LanguageServer
 from . import __version__
 from .index import DocumentIndex, WorkspaceIndex
 from .model import SymbolInfo, SymbolKind
-from .word import enclosing_call, occurrences, word_at, word_prefix
+from .word import enclosing_call, occurrences, word_at, word_prefix, word_range_at
 
 REINDEX_COMMAND = "hyground.reindexWorkspace"
 
@@ -118,6 +118,36 @@ def _register_features(server: HyGroundServer) -> None:
             )
         return symbols
 
+    @server.feature(lsp.WORKSPACE_SYMBOL, lsp.WorkspaceSymbolOptions(resolve_provider=False))
+    def workspace_symbol(params: lsp.WorkspaceSymbolParams) -> list[lsp.SymbolInformation]:
+        query = params.query.lower()
+        out: list[lsp.SymbolInformation] = []
+        seen: set[tuple[str, str, int, int]] = set()
+        for document in server.index.documents.values():
+            for symbol in document.symbols.values():
+                if symbol.source is None:
+                    continue
+                if query and query not in symbol.name.lower():
+                    continue
+                key = (
+                    symbol.name,
+                    symbol.source.uri,
+                    symbol.source.start_line,
+                    symbol.source.start_character,
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                out.append(
+                    lsp.SymbolInformation(
+                        name=symbol.name,
+                        kind=_symbol_kind(symbol.kind),
+                        location=symbol.source.to_location(),
+                        container_name=symbol.detail or symbol.kind.value,
+                    )
+                )
+        return sorted(out, key=lambda symbol: symbol.name)
+
     @server.feature(lsp.TEXT_DOCUMENT_REFERENCES)
     def references(params: lsp.ReferenceParams) -> list[lsp.Location]:
         uri = params.text_document.uri
@@ -125,19 +155,37 @@ def _register_features(server: HyGroundServer) -> None:
         name = word_at(document.source, params.position.line, params.position.character)
         if not name:
             return []
-        locations: list[lsp.Location] = []
-        for doc_uri, indexed in server.index.documents.items():
-            for line, start, end in occurrences(indexed.source, name):
-                locations.append(
-                    lsp.Location(
-                        uri=doc_uri,
-                        range=lsp.Range(
-                            start=lsp.Position(line=line, character=start),
-                            end=lsp.Position(line=line, character=end),
-                        ),
-                    )
-                )
-        return locations
+        return _reference_locations(server, name)
+
+    @server.feature(lsp.TEXT_DOCUMENT_PREPARE_RENAME)
+    def prepare_rename(params: lsp.PrepareRenameParams) -> lsp.Range | None:
+        uri = params.text_document.uri
+        document = server.workspace.get_text_document(uri)
+        name = word_at(document.source, params.position.line, params.position.character)
+        symbol = server.index.resolve(uri, name) if name else None
+        word_range = word_range_at(document.source, params.position.line, params.position.character)
+        if symbol is None or word_range is None or not _renamable(symbol):
+            return None
+        start, end = word_range
+        return lsp.Range(
+            start=lsp.Position(line=params.position.line, character=start),
+            end=lsp.Position(line=params.position.line, character=end),
+        )
+
+    @server.feature(lsp.TEXT_DOCUMENT_RENAME, lsp.RenameOptions(prepare_provider=True))
+    def rename(params: lsp.RenameParams) -> lsp.WorkspaceEdit | None:
+        uri = params.text_document.uri
+        document = server.workspace.get_text_document(uri)
+        old_name = word_at(document.source, params.position.line, params.position.character)
+        symbol = server.index.resolve(uri, old_name) if old_name else None
+        if symbol is None or not _renamable(symbol) or not params.new_name:
+            return None
+        changes: dict[str, list[lsp.TextEdit]] = {}
+        for location in _reference_locations(server, old_name):
+            changes.setdefault(location.uri, []).append(
+                lsp.TextEdit(range=location.range, new_text=params.new_name)
+            )
+        return lsp.WorkspaceEdit(changes=changes)
 
     @server.feature(
         lsp.TEXT_DOCUMENT_SIGNATURE_HELP,
@@ -188,6 +236,31 @@ def _register_features(server: HyGroundServer) -> None:
             lsp.ShowMessageParams(type=lsp.MessageType.Info, message=message)
         )
         return {"ok": True, "root": str(root), "documents": len(ls.index.documents)}
+
+
+def _reference_locations(server: HyGroundServer, name: str) -> list[lsp.Location]:
+    locations: list[lsp.Location] = []
+    for doc_uri, indexed in server.index.documents.items():
+        for line, start, end in occurrences(indexed.source, name):
+            locations.append(
+                lsp.Location(
+                    uri=doc_uri,
+                    range=lsp.Range(
+                        start=lsp.Position(line=line, character=start),
+                        end=lsp.Position(line=line, character=end),
+                    ),
+                )
+            )
+    return locations
+
+
+def _renamable(symbol: SymbolInfo) -> bool:
+    return symbol.kind in {
+        SymbolKind.LOCAL_FUNCTION,
+        SymbolKind.LOCAL_MACRO,
+        SymbolKind.LOCAL_CLASS,
+        SymbolKind.LOCAL_VARIABLE,
+    }
 
 
 def _index_and_publish(server: HyGroundServer, uri: str, source: str) -> DocumentIndex:
