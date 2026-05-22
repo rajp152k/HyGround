@@ -45,7 +45,7 @@ CI covers the Python grid and a focused Hy compatibility grid for the declared m
 
 ## Release checklist
 
-Release publishing requires maintainer credentials or PyPI Trusted Publishing configuration. Do not commit tokens.
+Release publishing uses PyPI Trusted Publishing via `.github/workflows/publish.yml`. Before the first release, configure the PyPI project trusted publisher to match this repository, workflow `publish.yml`, and environment `pypi`. Do not commit PyPI tokens.
 
 1. Ensure `main`/`master` is green in CI.
 2. Update `CHANGELOG.md` with the release version and date.
@@ -60,5 +60,6 @@ Release publishing requires maintainer credentials or PyPI Trusted Publishing co
    ```
 5. Smoke-test an editor client when possible.
 6. Create and push a signed tag, e.g. `v0.2.0`.
-7. Publish with PyPI Trusted Publishing or `uv publish` from a trusted maintainer environment.
-8. Create a GitHub release with highlights and known limitations.
+7. Create a GitHub release with highlights and known limitations. Publishing the release triggers the `Publish` workflow.
+8. Confirm the workflow uploaded both sdist and wheel to PyPI.
+9. Smoke-test `uvx hyground --version` from a clean environment after PyPI propagation.
