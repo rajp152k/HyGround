@@ -36,8 +36,9 @@ class SemanticToken:
 def semantic_tokens(source: str, resolve_symbol) -> list[SemanticToken]:
     """Return best-effort semantic tokens for SOURCE.
 
-    ``resolve_symbol`` is a callable accepting a token string and returning a
-    ``SymbolInfo | None``. This keeps scanning independent from workspace state.
+    ``resolve_symbol`` is a callable accepting ``(token, line, character)`` and
+    returning ``SymbolInfo | None``. This keeps scanning independent from
+    workspace state while allowing position-aware scoped resolution.
     """
 
     tokens: list[SemanticToken] = []
@@ -83,7 +84,7 @@ def _line_tokens(line: str, line_no: int, resolve_symbol) -> list[SemanticToken]
         if any(skip_start <= start < skip_end for skip_start, skip_end in spans_to_skip):
             continue
         text = match.group(0)
-        token_type = _classify_token(text, resolve_symbol(text))
+        token_type = _classify_token(text, resolve_symbol(text, line_no, start))
         if token_type is None:
             continue
         tokens.append(SemanticToken(line_no, start, end - start, token_type))

@@ -119,7 +119,7 @@ def _register_features(server: HyGroundServer) -> None:
     def semantic_tokens_full(params: lsp.SemanticTokensParams) -> lsp.SemanticTokens:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
-        tokens = semantic_tokens(document.source, lambda name: server.index.resolve(uri, name))
+        tokens = semantic_tokens(document.source, lambda name, line, character: server.index.resolve(uri, name, line, character))
         return lsp.SemanticTokens(data=encode_semantic_tokens(tokens))
 
     @server.feature(lsp.TEXT_DOCUMENT_FOLDING_RANGE)
