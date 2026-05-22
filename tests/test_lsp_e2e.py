@@ -305,6 +305,9 @@ json.du
         )
         assert "project-lib.helper" in completion_labels(hy_alias_completion)
 
+        folding_ranges = client.request("textDocument/foldingRange", {"textDocument": {"uri": uri}})
+        assert any(fold["startLine"] < fold["endLine"] for fold in folding_ranges)
+
         document_symbols = client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri}})
         assert {symbol["name"] for symbol in document_symbols} >= {"foo", "bar"}
 
