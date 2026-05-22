@@ -49,6 +49,16 @@ def _register_features(server: HyGroundServer) -> None:
             lsp.PublishDiagnosticsParams(uri=uri, diagnostics=[])
         )
 
+    @server.feature(lsp.WORKSPACE_DID_CHANGE_WATCHED_FILES)
+    def did_change_watched_files(params: lsp.DidChangeWatchedFilesParams) -> None:
+        roots = {
+            server.index.root_for_uri(change.uri)
+            for change in params.changes
+            if _is_reindex_relevant_uri(change.uri)
+        }
+        for root in roots:
+            _reindex_root_and_publish(server, root)
+
     @server.feature(
         lsp.TEXT_DOCUMENT_COMPLETION,
         lsp.CompletionOptions(trigger_characters=[".", " ", "-", "_", ":", "[", "#"]),
@@ -233,14 +243,7 @@ def _register_features(server: HyGroundServer) -> None:
             return {"ok": False, "message": "No workspace or open Hy document to reindex."}
 
         root = ls.index.root_for_uri(target_uri)
-        open_sources = {
-            doc_uri: document.source
-            for doc_uri, document in ls.workspace.text_documents.items()
-            if ls.index.root_for_uri(doc_uri).resolve() == root.resolve()
-        }
-        rebuilt = ls.index.reindex_root(root, open_sources)
-        for document in rebuilt:
-            _publish_diagnostics(ls, document)
+        rebuilt = _reindex_root_and_publish(ls, root)
 
         message = f"HyGround reindexed {root} ({len(ls.index.documents)} documents)."
         ls.window_show_message(
@@ -322,6 +325,26 @@ def _index_and_publish(server: HyGroundServer, uri: str, source: str) -> Documen
     document = server.index.update_document(uri, source)
     _publish_diagnostics(server, document)
     return document
+
+
+def _reindex_root_and_publish(server: HyGroundServer, root) -> list[DocumentIndex]:
+    open_sources = {
+        doc_uri: document.source
+        for doc_uri, document in server.workspace.text_documents.items()
+        if server.index.root_for_uri(doc_uri).resolve() == root.resolve()
+    }
+    rebuilt = server.index.reindex_root(root, open_sources)
+    for document in rebuilt:
+        _publish_diagnostics(server, document)
+    return rebuilt
+
+
+def _is_reindex_relevant_uri(uri: str) -> bool:
+    path = uri.rsplit("/", 1)[-1]
+    return (
+        path.endswith((".hy", ".py", ".pyi"))
+        or path in {"pyproject.toml", "uv.lock", "poetry.lock", "pdm.lock", "requirements.txt"}
+    )
 
 
 def _publish_diagnostics(server: HyGroundServer, document: DocumentIndex) -> None:

@@ -350,6 +350,41 @@ json.du
         client.close()
 
 
+def test_lsp_watched_file_change_refreshes_new_python_modules(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'e2e-watch'\n")
+    main = tmp_path / "main.hy"
+    source = "(import watched-lib)\nwatched-lib.hello\n"
+    main.write_text(source)
+    uri = uris.from_fs_path(str(main))
+
+    client = LspClient(tmp_path)
+    try:
+        client.initialize(tmp_path)
+        client.did_open(uri, source)
+        client.wait_notification("textDocument/publishDiagnostics")
+
+        before = client.request(
+            "textDocument/completion",
+            text_document_position(uri, source, "watched-lib.he", len("watched-lib.he")),
+        )
+        assert "watched-lib.hello" not in completion_labels(before)
+
+        watched = tmp_path / "watched_lib.py"
+        watched.write_text('def hello():\n    """Watched docs."""\n    return 1\n')
+        client.notify(
+            "workspace/didChangeWatchedFiles",
+            {"changes": [{"uri": uris.from_fs_path(str(watched)), "type": 1}]},
+        )
+
+        after = client.request(
+            "textDocument/completion",
+            text_document_position(uri, source, "watched-lib.he", len("watched-lib.he")),
+        )
+        assert "watched-lib.hello" in completion_labels(after)
+    finally:
+        client.close()
+
+
 def test_lsp_reindex_command_refreshes_new_python_modules(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'e2e-reindex'\n")
     main = tmp_path / "main.hy"

@@ -114,7 +114,7 @@ Snake-case aliases (`index_limit`, `exclude_dirs`, `allow_workspace_imports`) ar
 
 ## Reindexing
 
-HyGround indexes open buffers and project `.hy` files. If files, imports, or virtual environment packages change while the server is running, request a fresh index:
+HyGround indexes open buffers and project `.hy` files. When an editor sends `workspace/didChangeWatchedFiles` for relevant `.hy`, `.py`, `.pyi`, or config/lock files, HyGround refreshes the affected workspace root automatically. If the editor does not send watched-file notifications, or if imports/virtual environments change in a way the editor misses, request a fresh index manually:
 
 ```json
 {
@@ -129,7 +129,7 @@ In Emacs/lsp-mode:
 (lsp-send-execute-command "hyground.reindexWorkspace" (vector (lsp--buffer-uri)))
 ```
 
-The command clears Python resolver caches, rebuilds open Hy buffers from editor text, rereads project `.hy` files from disk, and republishes diagnostics.
+Automatic watched-file reindexing and the manual command share the same rebuild path: clear Python resolver/static caches, reload configuration, rebuild open Hy buffers from editor text, reread project `.hy` files from disk, and republish diagnostics.
 
 ## Emacs / lsp-mode
 
