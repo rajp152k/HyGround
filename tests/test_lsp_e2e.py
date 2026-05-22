@@ -203,6 +203,7 @@ def test_lsp_end_to_end_features(tmp_path: Path) -> None:
 (import cmath)
 (import local-lib)
 (import os.path [ex])
+(import lib :as project-lib)
 
 (defn foo [x]
   "Foo docs from e2e"
@@ -215,6 +216,7 @@ json.du
 (math.sqrt 4)
 (cmath.exp 1j)
 (local-lib.make-thing bar)
+(project-lib.helper)
 (helper)
 (foo bar)
 """
@@ -286,6 +288,18 @@ json.du
             text_document_position(uri, source, "helper", 2),
         )
         assert hy_definition[0]["uri"].endswith("lib.hy")
+
+        hy_alias_definition = client.request(
+            "textDocument/definition",
+            text_document_position(uri, source, "project-lib.helper", len("project-lib.he")),
+        )
+        assert hy_alias_definition[0]["uri"].endswith("lib.hy")
+
+        hy_alias_completion = client.request(
+            "textDocument/completion",
+            text_document_position(uri, source, "project-lib.helper", len("project-lib.he")),
+        )
+        assert "project-lib.helper" in completion_labels(hy_alias_completion)
 
         document_symbols = client.request("textDocument/documentSymbol", {"textDocument": {"uri": uri}})
         assert {symbol["name"] for symbol in document_symbols} >= {"foo", "bar"}

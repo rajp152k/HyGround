@@ -106,6 +106,7 @@ class PythonResolver:
                 kind=SymbolKind.MODULE,
                 detail="importable Python module",
                 documentation=f"Importable Python module `{hy.mangle(name)}`.",
+                module=name,
             )
             for name in self.top_level_modules()
             if name.startswith(prefix)
@@ -129,6 +130,7 @@ class PythonResolver:
                             kind=SymbolKind.MODULE,
                             detail="importable Python module",
                             documentation=f"Importable Python module `{module.name}`.",
+                            module=name,
                         )
 
         for symbol in self.attr_symbols(base_name, base, attr_prefix):
@@ -240,6 +242,7 @@ def symbol_from_object(name: str, obj: object, detail: str = "Python object") ->
         documentation=inspect.getdoc(obj) or "",
         source=_source_for_object(obj),
         runtime_object=obj,
+        module=getattr(obj, "__name__", "") if inspect.ismodule(obj) else getattr(obj, "__module__", ""),
     )
 
 
@@ -252,6 +255,7 @@ def _symbol_from_macro(name: str, obj: object, detail: str, reader: bool = False
         documentation=inspect.getdoc(obj) or "",
         source=_source_for_object(obj),
         runtime_object=obj,
+        module=getattr(obj, "__module__", ""),
     )
 
 

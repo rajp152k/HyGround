@@ -187,6 +187,48 @@ def test_project_wide_hy_definition(tmp_path) -> None:
     assert helper.source.uri.endswith("lib.hy")
 
 
+def test_imported_hy_member_resolution_is_module_aware(tmp_path) -> None:
+    root = tmp_path
+    main = root / "main.hy"
+    uri = uris.from_fs_path(str(main))
+    (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (root / "alpha.hy").write_text('(defn helper []\n  "Alpha docs"\n  1)\n')
+    (root / "beta.hy").write_text(
+        '(defn helper []\n  "Beta docs"\n  2)\n'
+        '(raise (Exception "do not import beta at indexing time"))\n'
+    )
+
+    index = WorkspaceIndex()
+    index.update_document(uri, "(import beta [helper])\n(helper)\n")
+
+    helper = index.resolve(uri, "helper")
+    assert helper is not None
+    assert helper.documentation == "Beta docs"
+    assert helper.source is not None
+    assert helper.source.uri.endswith("beta.hy")
+
+
+def test_hy_module_alias_dotted_resolution_and_completion(tmp_path) -> None:
+    root = tmp_path
+    main = root / "main.hy"
+    uri = uris.from_fs_path(str(main))
+    (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (root / "lib.hy").write_text('(defn helper []\n  "Alias docs"\n  1)\n')
+
+    index = WorkspaceIndex()
+    index.update_document(uri, "(import lib :as L)\n(L.helper)\n")
+
+    helper = index.resolve(uri, "L.helper")
+    assert helper is not None
+    assert helper.name == "L.helper"
+    assert helper.documentation == "Alias docs"
+    assert helper.source is not None
+    assert helper.source.uri.endswith("lib.hy")
+
+    completions = {symbol.name for symbol in index.symbols_for_completion(uri, "L.he")}
+    assert "L.helper" in completions
+
+
 def test_reindex_root_refreshes_project_files_and_python_imports(tmp_path) -> None:
     root = tmp_path
     main = root / "main.hy"

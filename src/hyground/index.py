@@ -42,7 +42,9 @@ class ParseDiagnostic:
 class DocumentIndex:
     uri: str
     source: str
+    module: str = ""
     symbols: dict[str, SymbolInfo] = field(default_factory=dict)
+    imports: list["_HyImportBinding"] = field(default_factory=list)
     diagnostics: list[ParseDiagnostic] = field(default_factory=list)
 
     @classmethod
@@ -52,8 +54,9 @@ class DocumentIndex:
         source: str,
         resolver: PythonResolver | None = None,
         compile_forms: bool = True,
+        module: str = "",
     ) -> "DocumentIndex":
-        index = cls(uri=uri, source=source)
+        index = cls(uri=uri, source=source, module=module)
         try:
             forms = list(hy.read_many(source, filename=uri))
         except Exception as exc:  # Hy parse exceptions don't share a stable base type.
@@ -125,6 +128,7 @@ class DocumentIndex:
             signature=f"({name} {params})",
             documentation=doc,
             source=SourceRange.from_hy_model(self.uri, form[1]),
+            module=self.module,
         )
 
     def _record_class(self, form: Expression) -> None:
@@ -141,6 +145,7 @@ class DocumentIndex:
             signature=f"(defclass {name} {bases})",
             documentation=doc,
             source=SourceRange.from_hy_model(self.uri, form[1]),
+            module=self.module,
         )
 
     def _record_setv(self, form: Expression) -> None:
@@ -154,10 +159,12 @@ class DocumentIndex:
                     detail="local setv",
                     documentation="Local value bound with setv.",
                     source=SourceRange.from_hy_model(self.uri, target),
+                    module=self.module,
                 )
 
     def _record_import(self, form: Expression, resolver: PythonResolver) -> None:
         for spec in _parse_import_specs(list(form[1:])):
+            self._record_hy_import_binding(spec)
             if spec.star:
                 self._record_star_import(spec.module, resolver)
                 continue
@@ -175,6 +182,57 @@ class DocumentIndex:
             visible = spec.module.split(".")[0] if "." in spec.module else spec.module
             self._add_symbol(resolver.module_symbol(visible, visible))
             self._add_symbol(resolver.module_symbol(spec.module, spec.module))
+
+    def _record_hy_import_binding(self, spec: "_ImportSpec") -> None:
+        if spec.star:
+            self.imports.append(
+                _HyImportBinding(
+                    visible="",
+                    module=spec.module,
+                    star=True,
+                    source=SourceRange.from_hy_model(self.uri, spec.model),
+                )
+            )
+            return
+
+        if spec.members:
+            for member in spec.members:
+                self.imports.append(
+                    _HyImportBinding(
+                        visible=member.visible,
+                        module=spec.module,
+                        member=member.original,
+                        source=SourceRange.from_hy_model(self.uri, member.model),
+                    )
+                )
+            return
+
+        if spec.alias:
+            self.imports.append(
+                _HyImportBinding(
+                    visible=spec.alias,
+                    module=spec.module,
+                    source=SourceRange.from_hy_model(self.uri, spec.alias_model or spec.model),
+                )
+            )
+            return
+
+        top_level = spec.module.split(".")[0]
+        self.imports.append(
+            _HyImportBinding(
+                visible=top_level,
+                module=top_level,
+                source=SourceRange.from_hy_model(self.uri, spec.model),
+            )
+        )
+        if spec.module != top_level:
+            self.imports.append(
+                _HyImportBinding(
+                    visible=spec.module,
+                    module=spec.module,
+                    source=SourceRange.from_hy_model(self.uri, spec.model),
+                )
+            )
 
     def _record_star_import(self, module_name: str, resolver: PythonResolver) -> None:
         module = resolver.import_module(module_name)
@@ -234,6 +292,7 @@ class DocumentIndex:
             detail=f"required {'reader macro' if reader else 'macro'} from {module_name}",
             documentation=f"{noun} required from `{module_name}`.",
             source=SourceRange.from_hy_model(self.uri, member.model),
+            module=module_name,
         )
 
     def _add_symbol(self, symbol: SymbolInfo | None) -> None:
@@ -254,7 +313,12 @@ class WorkspaceIndex:
     def update_document(self, uri: str, source: str) -> DocumentIndex:
         root = self.root_for_uri(uri)
         resolver = self.resolver_for_root(root)
-        document = DocumentIndex.build(uri, source, resolver)
+        document = DocumentIndex.build(
+            uri,
+            source,
+            resolver,
+            module=self.module_for_uri(uri, root),
+        )
         self.documents[uri] = document
         self.ensure_project_index(root)
         return document
@@ -275,6 +339,13 @@ class WorkspaceIndex:
             self.resolvers[root] = PythonResolver(root)
         return self.resolvers[root]
 
+    def module_for_uri(self, uri: str, root: Path) -> str:
+        try:
+            path = Path(uris.to_fs_path(uri))
+        except Exception:
+            return ""
+        return _module_name_for_path(root, path)
+
     def ensure_project_index(self, root: Path) -> None:
         root = root.resolve()
         if root in self.indexed_roots:
@@ -285,7 +356,13 @@ class WorkspaceIndex:
             if uri in self.documents:
                 continue
             try:
-                self.documents[uri] = DocumentIndex.build(uri, path.read_text(), resolver, compile_forms=False)
+                self.documents[uri] = DocumentIndex.build(
+                    uri,
+                    path.read_text(),
+                    resolver,
+                    compile_forms=False,
+                    module=_module_name_for_path(root, path),
+                )
             except UnicodeDecodeError:
                 continue
         self.indexed_roots.add(root)
@@ -313,7 +390,12 @@ class WorkspaceIndex:
         for doc_uri, source in open_sources.items():
             if self.root_for_uri(doc_uri).resolve() != root:
                 continue
-            document = DocumentIndex.build(doc_uri, source, resolver)
+            document = DocumentIndex.build(
+                doc_uri,
+                source,
+                resolver,
+                module=self.module_for_uri(doc_uri, root),
+            )
             self.documents[doc_uri] = document
             rebuilt.append(document)
 
@@ -328,7 +410,9 @@ class WorkspaceIndex:
         out: list[SymbolInfo] = []
         symbol_sources = []
         if uri in self.documents:
-            symbol_sources.append(self.documents[uri].symbols.values())
+            document = self.documents[uri]
+            symbol_sources.append(document.symbols.values())
+            symbol_sources.append(self._hy_import_completion_symbols(uri, document, prefix))
         symbol_sources.extend(document.symbols.values() for doc_uri, document in self.documents.items() if doc_uri != uri)
         symbol_sources.extend([self.core_symbols.values(), self.builtin_symbols.values()])
 
@@ -348,9 +432,44 @@ class WorkspaceIndex:
 
         return sorted(out, key=lambda s: (s.name.startswith("_"), s.name))
 
+    def _hy_import_completion_symbols(
+        self,
+        uri: str,
+        document: DocumentIndex,
+        prefix: str,
+    ) -> list[SymbolInfo]:
+        symbols: list[SymbolInfo] = []
+        for binding in document.imports:
+            if binding.star:
+                module_document = self._document_for_module(uri, binding.module)
+                if module_document is None:
+                    continue
+                symbols.extend(
+                    _clone_symbol(symbol, symbol.name)
+                    for symbol in module_document.symbols.values()
+                    if symbol.name.startswith(prefix)
+                )
+                continue
+
+            if binding.member:
+                symbol = self._symbol_from_hy_module(uri, binding.module, binding.member, binding.visible)
+                if symbol is not None and symbol.name.startswith(prefix):
+                    symbols.append(symbol)
+                continue
+
+            if binding.visible.startswith(prefix):
+                module_symbol = self._hy_module_symbol(uri, binding.module, binding.visible)
+                if module_symbol is not None:
+                    symbols.append(module_symbol)
+        return symbols
+
     def _attribute_completions(self, uri: str, prefix: str) -> list[SymbolInfo]:
         base_name, _, attr_prefix = prefix.rpartition(".")
         base = self.resolve(uri, base_name)
+        if base is not None and base.kind == SymbolKind.MODULE and base.module:
+            hy_symbols = self._hy_module_attribute_symbols(uri, base.module, base_name, attr_prefix)
+            if hy_symbols:
+                return hy_symbols
         if base is None:
             root = self.root_for_uri(uri)
             obj = self.resolver_for_root(root).resolve_qualified(base_name)
@@ -361,6 +480,114 @@ class WorkspaceIndex:
             return []
         return self.resolver_for_root(self.root_for_uri(uri)).attr_symbols(base_name, base.runtime_object, attr_prefix)
 
+    def _hy_module_attribute_symbols(
+        self,
+        uri: str,
+        module: str,
+        visible_base: str,
+        attr_prefix: str,
+    ) -> list[SymbolInfo]:
+        document = self._document_for_module(uri, module)
+        if document is None:
+            return []
+        return sorted(
+            (
+                _clone_symbol(symbol, f"{visible_base}.{symbol.name}")
+                for symbol in document.symbols.values()
+                if symbol.name.startswith(attr_prefix)
+            ),
+            key=lambda symbol: symbol.name,
+        )
+
+    def _document_for_module(self, uri: str, module: str) -> DocumentIndex | None:
+        root = self.root_for_uri(uri).resolve()
+        for doc_uri, document in self.documents.items():
+            if document.module != module:
+                continue
+            if self.root_for_uri(doc_uri).resolve() == root:
+                return document
+        return None
+
+    def _hy_module_symbol(self, uri: str, module: str, visible: str) -> SymbolInfo | None:
+        document = self._document_for_module(uri, module)
+        if document is None:
+            return None
+        return SymbolInfo(
+            name=visible,
+            kind=SymbolKind.MODULE,
+            detail=f"Hy module {module}",
+            documentation=f"Hy module `{module}`.",
+            source=SourceRange(uri=document.uri, start_line=0, start_character=0, end_line=0, end_character=0),
+            module=module,
+        )
+
+    def _symbol_from_hy_module(
+        self,
+        uri: str,
+        module: str,
+        member: str,
+        visible: str,
+    ) -> SymbolInfo | None:
+        document = self._document_for_module(uri, module)
+        if document is None:
+            return None
+        symbol = document.symbols.get(member)
+        if symbol is None:
+            return None
+        return _clone_symbol(symbol, visible)
+
+    def _resolve_hy_import(self, uri: str, document: DocumentIndex, name: str) -> SymbolInfo | None:
+        for binding in document.imports:
+            if binding.star:
+                if "." not in name:
+                    symbol = self._symbol_from_hy_module(uri, binding.module, name, name)
+                    if symbol is not None:
+                        return symbol
+                continue
+
+            if binding.member:
+                if name == binding.visible:
+                    symbol = self._symbol_from_hy_module(uri, binding.module, binding.member, binding.visible)
+                    if symbol is not None:
+                        return symbol
+                continue
+
+            if name == binding.visible:
+                module_symbol = self._hy_module_symbol(uri, binding.module, binding.visible)
+                if module_symbol is not None:
+                    return module_symbol
+                continue
+
+            prefix = f"{binding.visible}."
+            if name.startswith(prefix):
+                rest = name[len(prefix) :]
+                symbol = self._resolve_hy_module_path(uri, binding.module, rest, name)
+                if symbol is not None:
+                    return symbol
+        return None
+
+    def _resolve_hy_module_path(
+        self,
+        uri: str,
+        module: str,
+        rest: str,
+        visible: str,
+    ) -> SymbolInfo | None:
+        parts = [part for part in rest.split(".") if part]
+        for split in range(0, len(parts) + 1):
+            module_suffix = ".".join(parts[:split])
+            candidate_module = f"{module}.{module_suffix}" if module_suffix else module
+            member = ".".join(parts[split:])
+            if not member:
+                module_symbol = self._hy_module_symbol(uri, candidate_module, visible)
+                if module_symbol is not None:
+                    return module_symbol
+                continue
+            symbol = self._symbol_from_hy_module(uri, candidate_module, member, visible)
+            if symbol is not None:
+                return symbol
+        return None
+
     def resolve(self, uri: str, name: str) -> SymbolInfo | None:
         if "." in name:
             resolved = self._resolve_dotted(uri, name)
@@ -369,6 +596,10 @@ class WorkspaceIndex:
         document = self.documents.get(uri)
         if document and name in document.symbols:
             return document.symbols[name]
+        if document:
+            imported = self._resolve_hy_import(uri, document, name)
+            if imported is not None:
+                return imported
         for doc_uri, other in self.documents.items():
             if doc_uri != uri and name in other.symbols:
                 return other.symbols[name]
@@ -383,6 +614,12 @@ class WorkspaceIndex:
         return None
 
     def _resolve_dotted(self, uri: str, name: str) -> SymbolInfo | None:
+        document = self.documents.get(uri)
+        if document is not None:
+            imported = self._resolve_hy_import(uri, document, name)
+            if imported is not None:
+                return imported
+
         base_name, _, rest = name.partition(".")
         base = self.resolve(uri, base_name) if base_name != name else None
         obj = base.runtime_object if base and base.runtime_object is not None else None
@@ -401,6 +638,15 @@ class WorkspaceIndex:
 
 
 @dataclass(frozen=True)
+class _HyImportBinding:
+    visible: str
+    module: str
+    member: str = ""
+    star: bool = False
+    source: SourceRange | None = None
+
+
+@dataclass(frozen=True)
 class _ImportMember:
     original: str
     visible: str
@@ -410,7 +656,9 @@ class _ImportMember:
 @dataclass(frozen=True)
 class _ImportSpec:
     module: str
+    model: object
     alias: str = ""
+    alias_model: object | None = None
     members: tuple[_ImportMember, ...] = ()
     star: bool = False
 
@@ -430,18 +678,21 @@ def _parse_import_specs(items: list[object]) -> list[_ImportSpec]:
     specs: list[_ImportSpec] = []
     i = 0
     while i < len(items):
-        module_name = _module_name(items[i])
+        model = items[i]
+        module_name = _module_name(model)
         if not module_name:
             i += 1
             continue
 
         alias = ""
+        alias_model: object | None = None
         members: tuple[_ImportMember, ...] = ()
         star = False
         i += 1
 
         if i + 1 < len(items) and _is_keyword(items[i], "as") and isinstance(items[i + 1], Symbol):
             alias = str(items[i + 1])
+            alias_model = items[i + 1]
             i += 2
         elif i < len(items) and isinstance(items[i], HyList):
             members, star = _parse_member_selector(items[i])
@@ -450,7 +701,16 @@ def _parse_import_specs(items: list[object]) -> list[_ImportSpec]:
             star = True
             i += 1
 
-        specs.append(_ImportSpec(module=module_name, alias=alias, members=members, star=star))
+        specs.append(
+            _ImportSpec(
+                module=module_name,
+                model=model,
+                alias=alias,
+                alias_model=alias_model,
+                members=members,
+                star=star,
+            )
+        )
     return specs
 
 
@@ -561,6 +821,33 @@ def _parse_member_selector(values: HyList) -> tuple[tuple[_ImportMember, ...], b
 
 def _is_star(model: object) -> bool:
     return isinstance(model, Symbol) and str(model) == "*"
+
+
+def _clone_symbol(symbol: SymbolInfo, name: str) -> SymbolInfo:
+    return SymbolInfo(
+        name=name,
+        kind=symbol.kind,
+        detail=symbol.detail,
+        documentation=symbol.documentation,
+        signature=symbol.signature,
+        source=symbol.source,
+        runtime_object=symbol.runtime_object,
+        module=symbol.module,
+    )
+
+
+def _module_name_for_path(root: Path, path: Path) -> str:
+    try:
+        relative = path.resolve().relative_to(root.resolve())
+    except ValueError:
+        relative = Path(path.name)
+    without_suffix = relative.with_suffix("")
+    parts = list(without_suffix.parts)
+    if parts and parts[-1] == "__init__":
+        parts.pop()
+    if not parts:
+        return hy.unmangle(path.stem)
+    return ".".join(hy.unmangle(part) for part in parts)
 
 
 _DEFCORE_DETAIL = "Hy core form"
