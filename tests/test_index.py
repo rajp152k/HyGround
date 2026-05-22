@@ -93,6 +93,23 @@ def test_importable_module_completion() -> None:
     assert "pathlib" in candidates
 
 
+def test_hyphenated_import_member_aliases(tmp_path) -> None:
+    root = tmp_path
+    main = root / "main.hy"
+    uri = uris.from_fs_path(str(main))
+    (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (root / "cool_lib.py").write_text('def hello_world():\n    "Hello alias docs"\n    return 1\n')
+
+    index = WorkspaceIndex()
+    index.update_document(uri, "(import cool-lib [hello-world :as greet])\n")
+
+    greet = index.resolve(uri, "greet")
+    assert greet is not None
+    assert greet.documentation == "Hello alias docs"
+    assert greet.source is not None
+    assert greet.source.uri.endswith("cool_lib.py")
+
+
 def test_project_wide_hy_definition(tmp_path) -> None:
     root = tmp_path
     uri = f"file://{root}/main.hy"
