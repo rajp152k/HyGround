@@ -71,6 +71,7 @@ source = { editable = "." }
 dependencies = [
     { name = "hy" },
     { name = "pygls" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "typeshed-client" },
 ]
 
@@ -83,6 +84,7 @@ dev = [
 requires-dist = [
     { name = "hy", specifier = ">=1.2.0" },
     { name = "pygls", specifier = ">=1.3.1" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
     { name = "typeshed-client", specifier = ">=2.11.0" },
 ]
 

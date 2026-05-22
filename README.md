@@ -77,6 +77,8 @@ Hy names are mapped to Python names when resolving imports and attributes:
 (local-lib.make-thing 1) ; resolves local_lib.make_thing
 ```
 
+Resolver behavior is configurable in `pyproject.toml`. Set `allow-workspace-imports = false` when you want HyGround to avoid importing workspace-local Python/Hy modules while still resolving safe external libraries and statically indexed Hy definitions.
+
 ## Import and require completion
 
 HyGround understands mixed `import` forms with module aliases, member lists, member aliases, and star imports. Completion inside an import member list is scoped to that module:
@@ -88,6 +90,25 @@ HyGround understands mixed `import` forms with module aliases, member lists, mem
 `require` indexing covers module aliases, selected macros, star macros, `:macros`, and `:readers` forms where the macro module can be imported from the workspace. Reader macros are represented as `#name` symbols internally.
 
 Project Hy imports are also tracked statically. For example, `(import lib :as L)` lets `L.helper` complete and jump to `lib.hy` without relying on a name-only project search.
+
+## Configuration
+
+HyGround reads optional workspace settings from `[tool.hyground]` in `pyproject.toml`:
+
+```toml
+[tool.hyground]
+index-limit = 500
+exclude-dirs = ["generated", "node_modules"]
+allow-workspace-imports = true
+```
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `index-limit` | `500` | Maximum number of project `.hy` files to index per workspace root. |
+| `exclude-dirs` | built-in generated/cache dirs | Extra directory names skipped during recursive `.hy` indexing. Built-ins include `.git`, `.venv`, `venv`, `__pycache__`, `.mypy_cache`, and `.pytest_cache`. |
+| `allow-workspace-imports` | `true` | Allows runtime importing of workspace-local modules for Python docs/signatures and Hy `require` macro data. Set to `false` for safer workspaces; HyGround will still import external libraries and use static Hy indexing where possible. |
+
+Snake-case aliases (`index_limit`, `exclude_dirs`, `allow_workspace_imports`) are also accepted. Re-run `hyground.reindexWorkspace` after changing configuration in a running server.
 
 ## Reindexing
 
@@ -143,6 +164,7 @@ For an installed package, use:
 
 - `server.py`: pygls feature registration and LSP request handlers.
 - `index.py`: Hy document/workspace indexing, module names, and static Hy import bindings.
+- `config.py`: typed workspace configuration from `[tool.hyground]`.
 - `resolver.py`: workspace-scoped Python import, object, source, and stub resolution.
 - `model.py`: shared symbol and source range model.
 - `word.py`: token, range, occurrence, and call-site utilities.
@@ -165,7 +187,7 @@ The test suite contains:
 
 - unit tests for Hy indexing, Python resolution, reindexing, and word utilities
 - end-to-end stdio LSP tests that launch `hyground` and speak JSON-RPC
-- CI coverage for Python 3.10, 3.11, 3.12, 3.13, and 3.14
+- CI coverage for Python 3.10, 3.11, 3.12, 3.13, and 3.14; Hy version-grid coverage from Hy 1.2.0 onward is tracked separately
 
 Smoke file:
 
@@ -178,7 +200,7 @@ examples/smoke.hy
 - Hy project symbol lookup is module-aware for explicit `import` forms, but unqualified fallback lookup is still name-based.
 - References and rename are lexical/name-based and can produce false positives.
 - Diagnostics use coarse ranges for many Hy reader/compiler errors.
-- Python object resolution imports modules. A static resolver is needed for packages that are unsafe or expensive to import.
+- Python object resolution may import modules when `allow-workspace-imports` is enabled. A richer static resolver is still needed for packages that are unsafe or expensive to import.
 - Typeshed jumps target interface stubs, not C implementation source.
 - Hy core form documentation is currently explicit data in `core_docs.py`. This is a stopgap. The production path should derive these docs from Hy's own documentation/source metadata or an upstream-supported machine-readable source, so HyGround does not maintain a parallel manual table.
 
@@ -192,5 +214,5 @@ Work required to move from the current implementation to production-grade toolin
 4. Improve diagnostics with precise ranges, stable error categories, and recovery for incomplete forms.
 5. Continue expanding context-aware completions for keywords, attributes, macros, and reader macros.
 6. Add static Python source/stub resolution paths that do not import user modules by default.
-7. Add configuration for workspace roots, indexing limits, excluded paths, and resolver behavior.
+7. Expand configuration for multiple workspace roots, client-supplied settings, and per-feature resolver behavior.
 8. Publish versioned releases to PyPI and document editor integrations beyond Emacs.

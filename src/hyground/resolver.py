@@ -22,17 +22,19 @@ import hy
 from pygls import uris
 from typeshed_client import get_stub_file
 
+from .config import DEFAULT_EXCLUDE_DIRS, HyGroundConfig
 from .model import SourceRange, SymbolInfo, SymbolKind
 
-_IGNORED_DIRS = {".git", ".hg", ".svn", ".venv", "venv", "__pycache__", ".mypy_cache", ".pytest_cache"}
+_IGNORED_DIRS = set(DEFAULT_EXCLUDE_DIRS)
 
 
 class PythonResolver:
     """Resolve Python modules/objects for one workspace root."""
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, config: HyGroundConfig | None = None) -> None:
         self.root = root
-        self.search_paths = _search_paths(root)
+        self.config = config or HyGroundConfig()
+        self.search_paths = _search_paths(root, include_root=self.config.allow_workspace_imports)
         self._module_cache: dict[str, ModuleType | None] = {}
         self._object_cache: dict[str, object | None] = {}
         self._top_level_modules: list[str] | None = None
@@ -41,7 +43,11 @@ class PythonResolver:
     def import_context(self) -> Iterator[None]:
         old_path = list(sys.path)
         prefixes = [str(path) for path in self.search_paths]
-        sys.path[:] = [*prefixes, *[p for p in sys.path if p not in prefixes]]
+        filtered = [p for p in sys.path if p not in prefixes]
+        if not self.config.allow_workspace_imports:
+            root = str(self.root.resolve())
+            filtered = [p for p in filtered if p not in {"", root}]
+        sys.path[:] = [*prefixes, *filtered]
         try:
             yield
         finally:
@@ -54,12 +60,54 @@ class PythonResolver:
             return self._module_cache[cache_key]
         try:
             importlib.invalidate_caches()
-            with self.import_context():
-                module = importlib.import_module(python_module_name)
+            if not self.config.allow_workspace_imports and self._is_workspace_module(python_module_name):
+                module = None
+            else:
+                with self.import_context():
+                    module = importlib.import_module(python_module_name)
         except Exception:
             module = None
         self._module_cache[cache_key] = module
         return module
+
+    def _is_workspace_module(self, python_module_name: str) -> bool:
+        if self._has_workspace_module_path(python_module_name):
+            return True
+        top_level = python_module_name.split(".", 1)[0]
+        if top_level != python_module_name and self._has_workspace_module_path(top_level):
+            return True
+        try:
+            with self.import_context():
+                spec = importlib.util.find_spec(python_module_name)
+        except (ImportError, AttributeError, ValueError):
+            return False
+        if spec is None:
+            return False
+        candidates: list[str] = []
+        if spec.origin and spec.origin not in {"built-in", "frozen", "namespace"}:
+            candidates.append(spec.origin)
+        if spec.submodule_search_locations:
+            candidates.extend(spec.submodule_search_locations)
+        root = self.root.resolve()
+        for candidate in candidates:
+            try:
+                Path(candidate).resolve().relative_to(root)
+                return True
+            except (OSError, ValueError):
+                continue
+        return False
+
+    def _has_workspace_module_path(self, python_module_name: str) -> bool:
+        module_path = self.root.joinpath(*python_module_name.split("."))
+        return any(
+            candidate.exists()
+            for candidate in (
+                module_path.with_suffix(".py"),
+                module_path.with_suffix(".hy"),
+                module_path / "__init__.py",
+                module_path / "__init__.hy",
+            )
+        )
 
     def resolve_qualified(self, qualified_name: str) -> object | None:
         """Resolve ``module.attr.attr`` by importing the longest module prefix."""
@@ -295,10 +343,15 @@ def find_workspace_root(path: Path) -> Path:
     return start
 
 
-def iter_hy_files(root: Path, limit: int = 500) -> Iterator[Path]:
+def iter_hy_files(
+    root: Path,
+    limit: int = 500,
+    exclude_dirs: tuple[str, ...] | set[str] = tuple(_IGNORED_DIRS),
+) -> Iterator[Path]:
+    ignored = set(exclude_dirs)
     count = 0
     for path in root.rglob("*.hy"):
-        if any(part in _IGNORED_DIRS for part in path.parts):
+        if any(part in ignored for part in path.parts):
             continue
         yield path
         count += 1
@@ -306,8 +359,8 @@ def iter_hy_files(root: Path, limit: int = 500) -> Iterator[Path]:
             return
 
 
-def _search_paths(root: Path) -> list[Path]:
-    paths = [root]
+def _search_paths(root: Path, include_root: bool = True) -> list[Path]:
+    paths = [root] if include_root else []
     for venv_name in (".venv", "venv"):
         lib = root / venv_name / "lib"
         if not lib.exists():
