@@ -7,6 +7,7 @@ from pygls.lsp.server import LanguageServer
 
 from . import __version__
 from .completion_context import CompletionContext, completion_context
+from .folding import folding_ranges
 from .index import DocumentIndex, WorkspaceIndex
 from .model import SymbolInfo, SymbolKind
 from .word import enclosing_call, occurrences, word_at, word_prefix, word_range_at
@@ -106,6 +107,19 @@ def _register_features(server: HyGroundServer) -> None:
         if symbol is None or symbol.source is None:
             return None
         return [symbol.source.to_location()]
+
+    @server.feature(lsp.TEXT_DOCUMENT_FOLDING_RANGE)
+    def folding_range(params: lsp.FoldingRangeParams) -> list[lsp.FoldingRange]:
+        document = server.workspace.get_text_document(params.text_document.uri)
+        return [
+            lsp.FoldingRange(
+                start_line=fold.start_line,
+                start_character=fold.start_character,
+                end_line=fold.end_line,
+                end_character=fold.end_character,
+            )
+            for fold in folding_ranges(document.source)
+        ]
 
     @server.feature(lsp.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
     def document_symbol(params: lsp.DocumentSymbolParams) -> list[lsp.DocumentSymbol]:

@@ -37,6 +37,7 @@ pipx install hyground
 | `textDocument/hover` | supported | Python docs from `inspect`, local Hy docstrings, provisional Hy form docs |
 | `textDocument/definition` | supported | Local/project Hy definitions, module-aware Hy imports, Python source via `inspect`, typeshed fallback for builtins/C extensions |
 | `textDocument/documentSymbol` | supported | Definitions in the current Hy document |
+| `textDocument/foldingRange` | supported | Multi-line Hy forms/lists/dicts using tolerant delimiter scanning |
 | `workspace/symbol` | supported | Indexed Hy definitions across the workspace |
 | `textDocument/references` | partial | Scoped to the resolved declaration document for local/project Hy symbols; broader fallback for other names |
 | `textDocument/signatureHelp` | partial | Available when a signature is known from HyGround's symbol model or `inspect` |
@@ -170,6 +171,7 @@ For an installed package, use:
 - `resolver.py`: workspace-scoped Python import, object, source, and stub resolution.
 - `python_static.py`: side-effect-free AST indexing for workspace Python modules.
 - `model.py`: shared symbol and source range model.
+- `folding.py`: tolerant delimiter-based folding ranges.
 - `word.py`: token, range, occurrence, and call-site utilities.
 - `completion_context.py`: lightweight import/require context detection for incomplete forms.
 - `core_docs.py`: temporary Hy form documentation provider.
