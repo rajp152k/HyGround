@@ -15,6 +15,7 @@ from hy.models import Expression, Keyword, List as HyList, String, Symbol
 from lsprotocol import types as lsp
 from pygls import uris
 
+from .config import HyGroundConfig, load_config
 from .core_docs import CORE_DOCS
 from .model import SourceRange, SymbolInfo, SymbolKind
 from .resolver import PythonResolver, find_workspace_root, iter_hy_files, symbol_from_object
@@ -308,6 +309,7 @@ class WorkspaceIndex:
         self.core_symbols = _load_core_symbols()
         self.builtin_symbols = _load_builtin_symbols()
         self.resolvers: dict[Path, PythonResolver] = {}
+        self.configs: dict[Path, HyGroundConfig] = {}
         self.indexed_roots: set[Path] = set()
 
     def update_document(self, uri: str, source: str) -> DocumentIndex:
@@ -336,8 +338,14 @@ class WorkspaceIndex:
     def resolver_for_root(self, root: Path) -> PythonResolver:
         root = root.resolve()
         if root not in self.resolvers:
-            self.resolvers[root] = PythonResolver(root)
+            self.resolvers[root] = PythonResolver(root, self.config_for_root(root))
         return self.resolvers[root]
+
+    def config_for_root(self, root: Path) -> HyGroundConfig:
+        root = root.resolve()
+        if root not in self.configs:
+            self.configs[root] = load_config(root)
+        return self.configs[root]
 
     def module_for_uri(self, uri: str, root: Path) -> str:
         try:
@@ -351,7 +359,8 @@ class WorkspaceIndex:
         if root in self.indexed_roots:
             return
         resolver = self.resolver_for_root(root)
-        for path in iter_hy_files(root):
+        config = self.config_for_root(root)
+        for path in iter_hy_files(root, limit=config.index_limit, exclude_dirs=config.exclude_dirs):
             uri = uris.from_fs_path(str(path.resolve()))
             if uri in self.documents:
                 continue
@@ -378,7 +387,8 @@ class WorkspaceIndex:
         """
         root = root.resolve()
         open_sources = open_sources or {}
-        self.resolvers[root] = PythonResolver(root)
+        self.configs.pop(root, None)
+        self.resolvers[root] = PythonResolver(root, self.config_for_root(root))
         self.indexed_roots.discard(root)
 
         for doc_uri in list(self.documents):
