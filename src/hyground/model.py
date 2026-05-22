@@ -17,6 +17,7 @@ class SymbolKind(str, Enum):
     READER_MACRO = "reader-macro"
     LOCAL_CLASS = "local-class"
     LOCAL_VARIABLE = "local-variable"
+    PARAMETER = "parameter"
     MODULE = "module"
     UNKNOWN = "unknown"
 

@@ -261,6 +261,25 @@ json.du
         )
         assert "List comprehension" in lfor_hover["contents"]["value"]
 
+        parameter_hover = client.request(
+            "textDocument/hover",
+            text_document_position(uri, source, "x 1", 0),
+        )
+        assert "parameter of foo" in parameter_hover["contents"]["value"]
+
+        parameter_definition = client.request(
+            "textDocument/definition",
+            text_document_position(uri, source, "x 1", 0),
+        )
+        assert parameter_definition[0]["uri"] == uri
+        assert parameter_definition[0]["range"]["start"] == position_of(source, "[x", 1)
+
+        parameter_prepare_rename = client.request(
+            "textDocument/prepareRename",
+            text_document_position(uri, source, "x 1", 0),
+        )
+        assert parameter_prepare_rename is None
+
         python_hover = client.request(
             "textDocument/hover",
             text_document_position(uri, source, "local-lib.make-thing", len("local-lib.make")),

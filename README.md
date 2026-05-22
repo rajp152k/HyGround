@@ -33,7 +33,7 @@ pipx install hyground
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| `textDocument/completion` | supported | Hy forms, reader macros, Python builtins, import/require-aware modules and members, dotted attributes, local/project Hy symbols |
+| `textDocument/completion` | supported | Hy forms, reader macros, parameters, Python builtins, import/require-aware modules and members, dotted attributes, local/project Hy symbols |
 | `textDocument/hover` | supported | Python docs from `inspect`, local Hy docstrings, provisional Hy form docs |
 | `textDocument/definition` | supported | Local/project Hy definitions, module-aware Hy imports, Python source via `inspect`, typeshed fallback for builtins/C extensions |
 | `textDocument/documentSymbol` | supported | Definitions in the current Hy document |
@@ -262,8 +262,8 @@ examples/smoke.hy
 
 ## Known limitations
 
-- Hy project symbol lookup is module-aware for explicit `import` forms, but unqualified fallback lookup is still name-based.
-- References and rename are conservative and not yet backed by a full lexical scope graph; they may miss valid cross-module references.
+- Hy project symbol lookup is module-aware for explicit `import` forms, and basic callable parameters are position-scoped, but many lexical forms still need a full scope graph.
+- References and rename are conservative and not yet backed by a full lexical scope graph; they may miss valid cross-module references. Parameter rename is intentionally disabled until scope-limited edits are implemented.
 - Diagnostics use best-effort ranges; many Hy reader/compiler exceptions do not expose full end positions yet. Index recovery preserves complete forms before a reader error, but not forms after the error.
 - Python object resolution may import modules when `allow-workspace-imports` is enabled. Static Python fallback covers top-level workspace symbols, but does not attempt full type inference or arbitrary attribute flow.
 - Typeshed jumps target interface stubs, not C implementation source.
@@ -274,7 +274,7 @@ examples/smoke.hy
 Work required to move from the current implementation to production-grade tooling:
 
 1. Replace manual Hy core-form documentation with generated or upstream-provided documentation data.
-2. Deepen Hy symbol resolution for lexical scopes, requires, aliases, and shadowing beyond explicit import bindings.
+2. Deepen Hy symbol resolution for lexical scopes, requires, aliases, and shadowing beyond explicit import bindings and callable parameters.
 3. Replace conservative references/rename with a full scoped symbol-reference graph.
 4. Improve diagnostic recovery after reader errors and enrich categories beyond reader/compiler errors.
 5. Continue expanding context-aware completions for keywords, attributes, macros, and reader macros.

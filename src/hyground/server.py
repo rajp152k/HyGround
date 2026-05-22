@@ -79,7 +79,7 @@ def _register_features(server: HyGroundServer) -> None:
         context = completion_context(document.source, params.position.line, params.position.character)
         items = [
             _completion_item(symbol, replace_range)
-            for symbol in _symbols_for_completion(server, uri, prefix, context)
+            for symbol in _symbols_for_completion(server, uri, prefix, context, params.position)
         ]
         return lsp.CompletionList(is_incomplete=False, items=items)
 
@@ -90,7 +90,7 @@ def _register_features(server: HyGroundServer) -> None:
         name = word_at(document.source, params.position.line, params.position.character)
         if not name:
             return None
-        symbol = server.index.resolve(uri, name)
+        symbol = server.index.resolve(uri, name, params.position.line, params.position.character)
         if symbol is None:
             return None
         return lsp.Hover(
@@ -104,7 +104,7 @@ def _register_features(server: HyGroundServer) -> None:
         name = word_at(document.source, params.position.line, params.position.character)
         if not name:
             return None
-        symbol = server.index.resolve(uri, name)
+        symbol = server.index.resolve(uri, name, params.position.line, params.position.character)
         if symbol is None or symbol.source is None:
             return None
         return [symbol.source.to_location()]
@@ -195,7 +195,7 @@ def _register_features(server: HyGroundServer) -> None:
         name = word_at(document.source, params.position.line, params.position.character)
         if not name:
             return []
-        symbol = server.index.resolve(uri, name)
+        symbol = server.index.resolve(uri, name, params.position.line, params.position.character)
         include_declaration = params.context.include_declaration if params.context else True
         return _reference_locations(server, uri, name, symbol, include_declaration=include_declaration)
 
@@ -204,7 +204,7 @@ def _register_features(server: HyGroundServer) -> None:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
         name = word_at(document.source, params.position.line, params.position.character)
-        symbol = server.index.resolve(uri, name) if name else None
+        symbol = server.index.resolve(uri, name, params.position.line, params.position.character) if name else None
         word_range = word_range_at(document.source, params.position.line, params.position.character)
         if symbol is None or word_range is None or not _renamable_at_uri(symbol, uri):
             return None
@@ -219,7 +219,7 @@ def _register_features(server: HyGroundServer) -> None:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
         old_name = word_at(document.source, params.position.line, params.position.character)
-        symbol = server.index.resolve(uri, old_name) if old_name else None
+        symbol = server.index.resolve(uri, old_name, params.position.line, params.position.character) if old_name else None
         if symbol is None or not _renamable_at_uri(symbol, uri) or not params.new_name:
             return None
         changes: dict[str, list[lsp.TextEdit]] = {}
@@ -247,7 +247,7 @@ def _register_features(server: HyGroundServer) -> None:
         if call is None:
             return None
         name, active_parameter = call
-        symbol = server.index.resolve(uri, name)
+        symbol = server.index.resolve(uri, name, params.position.line, params.position.character)
         if symbol is None or not symbol.signature:
             return None
         return lsp.SignatureHelp(
@@ -389,6 +389,7 @@ def _symbols_for_completion(
     uri: str,
     prefix: str,
     context: CompletionContext,
+    position: lsp.Position,
 ) -> list[SymbolInfo]:
     resolver = server.index.resolver_for_root(server.index.root_for_uri(uri))
     if context.kind in {"import-module", "require-module"}:
@@ -399,7 +400,7 @@ def _symbols_for_completion(
         return resolver.macro_candidates(context.module, prefix)
     if context.kind == "require-reader" and context.module:
         return resolver.reader_macro_candidates(context.module, prefix)
-    return server.index.symbols_for_completion(uri, prefix)
+    return server.index.symbols_for_completion(uri, prefix, position.line, position.character)
 
 
 def _completion_item(symbol: SymbolInfo, replace_range: lsp.Range) -> lsp.CompletionItem:
@@ -424,6 +425,7 @@ def _completion_kind(kind: SymbolKind) -> lsp.CompletionItemKind:
         SymbolKind.READER_MACRO: lsp.CompletionItemKind.Keyword,
         SymbolKind.LOCAL_CLASS: lsp.CompletionItemKind.Class,
         SymbolKind.LOCAL_VARIABLE: lsp.CompletionItemKind.Variable,
+        SymbolKind.PARAMETER: lsp.CompletionItemKind.Variable,
         SymbolKind.MODULE: lsp.CompletionItemKind.Module,
     }.get(kind, lsp.CompletionItemKind.Text)
 
@@ -437,6 +439,7 @@ def _symbol_kind(kind: SymbolKind) -> lsp.SymbolKind:
         SymbolKind.READER_MACRO: lsp.SymbolKind.Function,
         SymbolKind.LOCAL_CLASS: lsp.SymbolKind.Class,
         SymbolKind.LOCAL_VARIABLE: lsp.SymbolKind.Variable,
+        SymbolKind.PARAMETER: lsp.SymbolKind.Variable,
         SymbolKind.MODULE: lsp.SymbolKind.Module,
     }.get(kind, lsp.SymbolKind.Object)
 
