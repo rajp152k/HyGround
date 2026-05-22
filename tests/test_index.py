@@ -66,6 +66,18 @@ def test_local_definition_docs_and_definition_range() -> None:
     assert foo.source.start_character == 6
 
 
+def test_assignment_destructuring_and_setx_are_indexed() -> None:
+    index = build('(setv [a b] pair)\n(setv (, c d) other)\n(setv {"x" e :y f} data)\n(setx g 1)\n(setv (. obj attr) 2)\n')
+
+    for name in ["a", "b", "c", "d", "e", "f", "g"]:
+        symbol = index.resolve(URI, name)
+        assert symbol is not None
+        assert symbol.kind == SymbolKind.LOCAL_VARIABLE
+
+    assert "attr" not in index.documents[URI].symbols
+    assert "g" in names(index, "g")
+
+
 def test_parameter_resolution_is_position_scoped() -> None:
     source = '(defn foo [print [y 1] #* rest]\n  (print y rest))\n(print "outside")\n'
     index = build(source)
