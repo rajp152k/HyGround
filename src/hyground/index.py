@@ -108,7 +108,7 @@ class DocumentIndex:
 
     def _record_definition(self, form: Expression, resolver: PythonResolver | None) -> None:
         head = _symbol_name(form[0])
-        if head in {"defn", "defmacro"}:
+        if head in {"defn", "defmacro", "defreader"}:
             self._record_callable(form, head)
         elif head == "defclass":
             self._record_class(form)
@@ -122,16 +122,17 @@ class DocumentIndex:
     def _record_callable(self, form: Expression, head: str) -> None:
         if len(form) < 3 or not isinstance(form[1], Symbol):
             return
-        name = str(form[1])
+        raw_name = str(form[1])
+        name = f"#{raw_name}" if head == "defreader" else raw_name
         params = _format_model(form[2])
         body = list(form[3:])
         doc = _leading_docstring(body)
-        kind = SymbolKind.LOCAL_MACRO if head == "defmacro" else SymbolKind.LOCAL_FUNCTION
+        kind = _callable_symbol_kind(head)
         self.symbols[name] = SymbolInfo(
             name=name,
             kind=kind,
             detail=f"local {head}",
-            signature=f"({name} {params})",
+            signature=_callable_signature(head, raw_name, name, params),
             documentation=doc,
             source=SourceRange.from_hy_model(self.uri, form[1]),
             module=self.module,
@@ -972,6 +973,20 @@ def _format_model(model: object) -> str:
         return hy.repr(model).lstrip("'")
     except Exception:
         return str(model)
+
+
+def _callable_symbol_kind(head: str) -> SymbolKind:
+    if head == "defmacro":
+        return SymbolKind.LOCAL_MACRO
+    if head == "defreader":
+        return SymbolKind.READER_MACRO
+    return SymbolKind.LOCAL_FUNCTION
+
+
+def _callable_signature(head: str, raw_name: str, visible_name: str, params: str) -> str:
+    if head == "defreader":
+        return f"(defreader {raw_name} {params})"
+    return f"({visible_name} {params})"
 
 
 def _leading_docstring(body: Iterable[object]) -> str:
