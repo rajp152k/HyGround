@@ -10,6 +10,7 @@ from .completion_context import CompletionContext, completion_context
 from .folding import folding_ranges
 from .index import DocumentIndex, WorkspaceIndex
 from .model import SymbolInfo, SymbolKind
+from .semantic import SEMANTIC_TOKEN_MODIFIERS, SEMANTIC_TOKEN_TYPES, encode_semantic_tokens, semantic_tokens
 from .word import enclosing_call, occurrences, word_at, word_prefix, word_range_at
 
 REINDEX_COMMAND = "hyground.reindexWorkspace"
@@ -107,6 +108,19 @@ def _register_features(server: HyGroundServer) -> None:
         if symbol is None or symbol.source is None:
             return None
         return [symbol.source.to_location()]
+
+    @server.feature(
+        lsp.TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL,
+        lsp.SemanticTokensLegend(
+            token_types=SEMANTIC_TOKEN_TYPES,
+            token_modifiers=SEMANTIC_TOKEN_MODIFIERS,
+        ),
+    )
+    def semantic_tokens_full(params: lsp.SemanticTokensParams) -> lsp.SemanticTokens:
+        uri = params.text_document.uri
+        document = server.workspace.get_text_document(uri)
+        tokens = semantic_tokens(document.source, lambda name: server.index.resolve(uri, name))
+        return lsp.SemanticTokens(data=encode_semantic_tokens(tokens))
 
     @server.feature(lsp.TEXT_DOCUMENT_FOLDING_RANGE)
     def folding_range(params: lsp.FoldingRangeParams) -> list[lsp.FoldingRange]:

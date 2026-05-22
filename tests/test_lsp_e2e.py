@@ -305,6 +305,10 @@ json.du
         )
         assert "project-lib.helper" in completion_labels(hy_alias_completion)
 
+        semantic = client.request("textDocument/semanticTokens/full", {"textDocument": {"uri": uri}})
+        assert semantic["data"]
+        assert len(semantic["data"]) % 5 == 0
+
         folding_ranges = client.request("textDocument/foldingRange", {"textDocument": {"uri": uri}})
         assert any(fold["startLine"] < fold["endLine"] for fold in folding_ranges)
 

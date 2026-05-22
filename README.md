@@ -37,6 +37,7 @@ pipx install hyground
 | `textDocument/hover` | supported | Python docs from `inspect`, local Hy docstrings, provisional Hy form docs |
 | `textDocument/definition` | supported | Local/project Hy definitions, module-aware Hy imports, Python source via `inspect`, typeshed fallback for builtins/C extensions |
 | `textDocument/documentSymbol` | supported | Definitions in the current Hy document |
+| `textDocument/semanticTokens/full` | supported | Best-effort semantic highlighting from lexical tokens plus `SymbolInfo` resolution |
 | `textDocument/foldingRange` | supported | Multi-line Hy forms/lists/dicts using tolerant delimiter scanning |
 | `workspace/symbol` | supported | Indexed Hy definitions across the workspace |
 | `textDocument/references` | partial | Scoped to the resolved declaration document for local/project Hy symbols; broader fallback for other names |
@@ -227,6 +228,7 @@ HyGround speaks standard LSP over stdio, but the project does not yet ship a VS 
 - `resolver.py`: workspace-scoped Python import, object, source, and stub resolution.
 - `python_static.py`: side-effect-free AST indexing for workspace Python modules.
 - `model.py`: shared symbol and source range model.
+- `semantic.py`: best-effort semantic tokens.
 - `folding.py`: tolerant delimiter-based folding ranges.
 - `word.py`: token, range, occurrence, and call-site utilities.
 - `completion_context.py`: lightweight import/require context detection for incomplete forms.
