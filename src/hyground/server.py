@@ -8,7 +8,7 @@ from pygls.lsp.server import LanguageServer
 from . import __version__
 from .index import DocumentIndex, WorkspaceIndex
 from .model import SymbolInfo, SymbolKind
-from .word import occurrences, word_at, word_prefix
+from .word import enclosing_call, occurrences, word_at, word_prefix
 
 
 class HyGroundServer(LanguageServer):
@@ -136,6 +136,34 @@ def _register_features(server: HyGroundServer) -> None:
                     )
                 )
         return locations
+
+    @server.feature(
+        lsp.TEXT_DOCUMENT_SIGNATURE_HELP,
+        lsp.SignatureHelpOptions(trigger_characters=[" ", "("])
+    )
+    def signature_help(params: lsp.SignatureHelpParams) -> lsp.SignatureHelp | None:
+        uri = params.text_document.uri
+        document = server.workspace.get_text_document(uri)
+        call = enclosing_call(document.source, params.position.line, params.position.character)
+        if call is None:
+            return None
+        name, active_parameter = call
+        symbol = server.index.resolve(uri, name)
+        if symbol is None or not symbol.signature:
+            return None
+        return lsp.SignatureHelp(
+            signatures=[
+                lsp.SignatureInformation(
+                    label=symbol.signature,
+                    documentation=lsp.MarkupContent(
+                        kind=lsp.MarkupKind.Markdown,
+                        value=_hover_markdown(symbol),
+                    ),
+                )
+            ],
+            active_signature=0,
+            active_parameter=active_parameter,
+        )
 
 
 def _index_and_publish(server: HyGroundServer, uri: str, source: str) -> DocumentIndex:

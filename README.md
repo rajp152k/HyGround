@@ -25,6 +25,7 @@ It is a clean rewrite inspired by Hyuga's useful ideas, but built around an expl
   - imported Python modules/classes/functions when `inspect` can locate source
 - document symbols for local definitions
 - simple references across indexed Hy files
+- signature help for indexed Hy/Python callables
 
 ## Install / run
 

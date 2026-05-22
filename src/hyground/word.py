@@ -51,3 +51,71 @@ def occurrences(source: str, name: str) -> list[tuple[int, int, int]]:
             if match.group(0) == name:
                 out.append((line_no, match.start(), match.end()))
     return out
+
+
+def enclosing_call(source: str, line: int, character: int) -> tuple[str, int] | None:
+    """Return ``(callee, active_parameter)`` for the nearest open call.
+
+    This is intentionally lightweight. Hy's reader remains the source of truth
+    for indexing; signature help just needs a useful local guess while the user
+    is editing incomplete forms.
+    """
+    lines = source.splitlines(keepends=True)
+    if not 0 <= line < len(lines):
+        return None
+    offset = sum(len(lines[i]) for i in range(line)) + min(character, len(lines[line]))
+    prefix = source[:offset]
+    depth = 0
+    start = -1
+    for i in range(len(prefix) - 1, -1, -1):
+        ch = prefix[i]
+        if ch == ")":
+            depth += 1
+        elif ch == "(":
+            if depth == 0:
+                start = i
+                break
+            depth -= 1
+    if start < 0:
+        return None
+    after = prefix[start + 1 :]
+    match = WORD_RE.search(after)
+    if not match:
+        return None
+    callee = match.group(0)
+    args = after[match.end() :]
+    active = _active_parameter(args)
+    return callee, active
+
+
+def _active_parameter(args: str) -> int:
+    depth = 0
+    active = 0
+    in_token = False
+    in_string = False
+    escape = False
+    for ch in args:
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+            in_token = True
+        elif ch in "([{" :
+            depth += 1
+            in_token = True
+        elif ch in ")]}":
+            depth = max(depth - 1, 0)
+            in_token = True
+        elif depth == 0 and ch.isspace():
+            if in_token:
+                active += 1
+                in_token = False
+        elif not ch.isspace():
+            in_token = True
+    return active
