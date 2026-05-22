@@ -33,7 +33,7 @@ pipx install hyground
 
 | Capability | Status | Notes |
 | --- | --- | --- |
-| `textDocument/completion` | supported | Hy forms, Python builtins, import/require-aware modules and members, dotted attributes, local/project Hy symbols |
+| `textDocument/completion` | supported | Hy forms, reader macros, Python builtins, import/require-aware modules and members, dotted attributes, local/project Hy symbols |
 | `textDocument/hover` | supported | Python docs from `inspect`, local Hy docstrings, provisional Hy form docs |
 | `textDocument/definition` | supported | Local/project Hy definitions, module-aware Hy imports, Python source via `inspect`, typeshed fallback for builtins/C extensions |
 | `textDocument/documentSymbol` | supported | Definitions in the current Hy document |
@@ -89,7 +89,7 @@ HyGround understands mixed `import` forms with module aliases, member lists, mem
 (import os.path [ex|]) ; suggests exists
 ```
 
-`require` indexing covers module aliases, selected macros, star macros, `:macros`, and `:readers` forms where the macro module can be imported from the workspace. Reader macros are represented as `#name` symbols internally.
+`require` indexing covers module aliases, selected macros, star macros, `:macros`, and `:readers` forms where the macro module can be imported from the workspace. Reader macros, including local `(defreader name ...)` definitions, are represented as `#name` symbols internally.
 
 Project Hy imports are also tracked statically. For example, `(import lib :as L)` lets `L.helper` complete and jump to `lib.hy` without relying on a name-only project search.
 

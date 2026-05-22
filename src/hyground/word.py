@@ -6,7 +6,7 @@ import re
 
 # Hy symbols include many operator characters. Keep this conservative enough to
 # avoid swallowing delimiters but broad enough for normal Hy identifiers.
-WORD_RE = re.compile(r"[+\-.?!><$/*%=@^&|~:\\\w]+")
+WORD_RE = re.compile(r"[#\+\-.?!><$/*%=@^&|~:\\\w]+")
 
 
 def line_word_prefix(line: str, character: int) -> str:

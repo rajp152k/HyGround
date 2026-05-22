@@ -9,6 +9,14 @@ def test_word_prefix_and_word_at() -> None:
     assert word_range_at(source, 0, 2) == (1, 5)
 
 
+def test_reader_macro_word() -> None:
+    source = "#bang value\n"
+
+    assert word_prefix(source, 0, 3) == "#ba"
+    assert word_at(source, 0, 2) == "#bang"
+    assert word_range_at(source, 0, 2) == (0, 5)
+
+
 def test_occurrences() -> None:
     assert occurrences("(foo)\n(foo bar)\n", "foo") == [(0, 1, 4), (1, 1, 4)]
 

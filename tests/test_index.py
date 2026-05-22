@@ -38,6 +38,19 @@ def test_python_builtin_docs() -> None:
     assert "Prints the values" in info.documentation
 
 
+def test_local_reader_macro_definition() -> None:
+    index = build('(defreader bang []\n  "Bang docs"\n  1)\n')
+
+    assert "#bang" in names(index, "#ba")
+    info = index.resolve(URI, "#bang")
+    assert info is not None
+    assert info.kind == SymbolKind.READER_MACRO
+    assert info.signature == "(defreader bang [])"
+    assert info.documentation == "Bang docs"
+    assert info.source is not None
+    assert info.source.start_line == 0
+
+
 def test_local_definition_docs_and_definition_range() -> None:
     index = build('(defn foo [x]\n  "Foo docs"\n  (+ x 1))\n(setv bar 2)\n')
 
@@ -162,6 +175,7 @@ def test_require_records_alias_star_selected_and_reader_macros(tmp_path) -> None
     assert reader is not None
     assert reader.kind == SymbolKind.READER_MACRO
     assert "reader macro" in reader.detail
+    assert "#bang" in {symbol.name for symbol in index.symbols_for_completion(uri, "#ba")}
 
 
 def test_hyphenated_import_member_aliases(tmp_path) -> None:
