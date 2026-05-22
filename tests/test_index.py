@@ -67,7 +67,7 @@ def test_compile_diagnostic() -> None:
 
 
 def test_python_import_completion_hover_and_definition() -> None:
-    index = build("(import pathlib [Path])\n(import os)\n(import json)\n")
+    index = build("(import pathlib [Path])\n(import os)\n(import json)\n(import math)\n(import cmath)\n")
 
     assert "Path" in names(index, "Pa")
     path_info = index.resolve(URI, "Path")
@@ -84,6 +84,18 @@ def test_python_import_completion_hover_and_definition() -> None:
     assert "Serialize" in dumps.documentation
     assert dumps.source is not None
     assert "json" in dumps.source.uri
+
+    sqrt = index.resolve(URI, "math.sqrt")
+    assert sqrt is not None
+    assert "square root" in sqrt.documentation
+    assert sqrt.source is not None
+    assert sqrt.source.uri.endswith("math.pyi")
+    assert sqrt.source.start_line > 0
+
+    exp = index.resolve(URI, "cmath.exp")
+    assert exp is not None
+    assert exp.source is not None
+    assert exp.source.uri.endswith("cmath.pyi")
 
 
 def test_importable_module_completion() -> None:

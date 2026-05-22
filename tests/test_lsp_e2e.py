@@ -199,6 +199,8 @@ def test_lsp_end_to_end_features(tmp_path: Path) -> None:
     main = tmp_path / "main.hy"
     source = """(import pathlib [Path])
 (import json)
+(import math)
+(import cmath)
 (import local-lib)
 
 (defn foo [x]
@@ -209,6 +211,8 @@ def test_lsp_end_to_end_features(tmp_path: Path) -> None:
 (lfor x (range 3) x)
 (Path ".")
 json.du
+(math.sqrt 4)
+(cmath.exp 1j)
 (local-lib.make-thing bar)
 (helper)
 (foo bar)
@@ -257,6 +261,19 @@ json.du
         assert python_definition[0]["uri"].endswith("local_lib.py")
         assert python_definition[0]["range"]["start"]["line"] == 0
 
+        math_definition = client.request(
+            "textDocument/definition",
+            text_document_position(uri, source, "math.sqrt", len("math.s")),
+        )
+        assert math_definition[0]["uri"].endswith("math.pyi")
+        assert math_definition[0]["range"]["start"]["line"] > 0
+
+        cmath_definition = client.request(
+            "textDocument/definition",
+            text_document_position(uri, source, "cmath.exp", len("cmath.e")),
+        )
+        assert cmath_definition[0]["uri"].endswith("cmath.pyi")
+
         hy_definition = client.request(
             "textDocument/definition",
             text_document_position(uri, source, "helper", 2),
@@ -282,7 +299,7 @@ json.du
             "textDocument/prepareRename",
             text_document_position(uri, source, "foo", 1),
         )
-        assert prepare_rename["start"]["line"] == 4
+        assert prepare_rename["start"] == position_of(source, "foo")
 
         rename = client.request(
             "textDocument/rename",

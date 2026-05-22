@@ -23,6 +23,7 @@ It is a clean rewrite inspired by Hyuga's useful ideas, but built around an expl
   - local Hy definitions
   - project-local Hy definitions
   - imported Python modules/classes/functions when `inspect` can locate source
+  - bundled typeshed stubs for C/builtin modules like `math` and `cmath`
 - document symbols and workspace symbols
 - simple references across indexed Hy files
 - signature help for indexed Hy/Python callables

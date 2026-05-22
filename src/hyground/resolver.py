@@ -7,6 +7,7 @@ rather than mutating a process-global search path permanently.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.util
 import inspect
@@ -19,6 +20,7 @@ from typing import Iterator
 
 import hy
 from pygls import uris
+from typeshed_client import get_stub_file
 
 from .model import SourceRange, SymbolInfo, SymbolKind
 
@@ -180,7 +182,7 @@ def _search_paths(root: Path) -> list[Path]:
 
 
 def _python_qualified_name(name: str) -> str:
-    return ".".join(hy.mangle(part) for part in name.split("."))
+    return ".".join(hy.mangle(part) if part else part for part in name.split("."))
 
 
 def _kind_for_object(obj: object) -> SymbolKind:
@@ -209,7 +211,12 @@ def _source_for_object(obj: object) -> SourceRange | None:
         return _source_for_module(obj)
 
     module_name = getattr(obj, "__module__", None)
+    object_name = getattr(obj, "__name__", None)
     if isinstance(module_name, str):
+        if isinstance(object_name, str):
+            stub = _source_for_stub_object(module_name, object_name)
+            if stub is not None:
+                return stub
         module = sys.modules.get(module_name)
         if module is None:
             try:
@@ -265,6 +272,12 @@ def _find_stub_for_module(module_name: str) -> Path | None:
             if candidate.exists():
                 return candidate
     try:
+        bundled = get_stub_file(module_name)
+    except Exception:
+        bundled = None
+    if bundled is not None:
+        return Path(bundled)
+    try:
         spec = importlib.util.find_spec(module_name)
     except (ImportError, ValueError):
         spec = None
@@ -272,6 +285,34 @@ def _find_stub_for_module(module_name: str) -> Path | None:
         origin = Path(spec.origin)
         if origin.with_suffix(".pyi").exists():
             return origin.with_suffix(".pyi")
+    return None
+
+
+def _source_for_stub_object(module_name: str, object_name: str) -> SourceRange | None:
+    stub = _find_stub_for_module(module_name)
+    if stub is None:
+        return None
+    line = _find_top_level_stub_name(stub, object_name)
+    if line is None:
+        return _range_for_path(stub, 1)
+    return _range_for_path(stub, line)
+
+
+def _find_top_level_stub_name(path: Path, name: str) -> int | None:
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return None
+    candidates = {name, hy.mangle(name)}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name in candidates:
+            return node.lineno
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in candidates:
+                    return node.lineno
+        if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name) and node.target.id in candidates:
+            return node.lineno
     return None
 
 
