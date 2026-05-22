@@ -1,3 +1,5 @@
+from pygls import uris
+
 from hyground.index import WorkspaceIndex
 
 URI = "file:///workspace/main.hy"
@@ -105,3 +107,35 @@ def test_project_wide_hy_definition(tmp_path) -> None:
     assert helper.documentation == "Helper docs"
     assert helper.source is not None
     assert helper.source.uri.endswith("lib.hy")
+
+
+def test_reindex_root_refreshes_project_files_and_python_imports(tmp_path) -> None:
+    root = tmp_path
+    main = root / "main.hy"
+    uri = uris.from_fs_path(str(main))
+    (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    main_source = "(import freshlib)\n(helper)\n"
+
+    index = WorkspaceIndex()
+    index.update_document(uri, main_source)
+    assert index.resolve(uri, "freshlib") is None
+    assert index.resolve(uri, "helper") is None
+
+    (root / "freshlib.py").write_text('def hello():\n    "Hello docs"\n    return 1\n')
+    (root / "lib.hy").write_text('(defn helper []\n  "Helper docs"\n  1)\n')
+
+    rebuilt = index.reindex_root(root, {uri: main_source})
+    assert [document.uri for document in rebuilt] == [uri]
+
+    freshlib = index.resolve(uri, "freshlib")
+    assert freshlib is not None
+    assert freshlib.source is not None
+    assert freshlib.source.uri.endswith("freshlib.py")
+
+    hello = index.resolve(uri, "freshlib.hello")
+    assert hello is not None
+    assert hello.documentation == "Hello docs"
+
+    helper = index.resolve(uri, "helper")
+    assert helper is not None
+    assert helper.documentation == "Helper docs"

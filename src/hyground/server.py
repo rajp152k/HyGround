@@ -10,6 +10,8 @@ from .index import DocumentIndex, WorkspaceIndex
 from .model import SymbolInfo, SymbolKind
 from .word import enclosing_call, occurrences, word_at, word_prefix
 
+REINDEX_COMMAND = "hyground.reindexWorkspace"
+
 
 class HyGroundServer(LanguageServer):
     """LanguageServer with explicit, instance-owned HyGround state."""
@@ -165,16 +167,42 @@ def _register_features(server: HyGroundServer) -> None:
             active_parameter=active_parameter,
         )
 
+    @server.command(REINDEX_COMMAND)
+    def reindex_workspace(ls: HyGroundServer, uri: str | None = None) -> dict[str, object]:
+        target_uri = uri or next(iter(ls.workspace.text_documents), None) or ls.workspace.root_uri
+        if target_uri is None:
+            return {"ok": False, "message": "No workspace or open Hy document to reindex."}
+
+        root = ls.index.root_for_uri(target_uri)
+        open_sources = {
+            doc_uri: document.source
+            for doc_uri, document in ls.workspace.text_documents.items()
+            if ls.index.root_for_uri(doc_uri).resolve() == root.resolve()
+        }
+        rebuilt = ls.index.reindex_root(root, open_sources)
+        for document in rebuilt:
+            _publish_diagnostics(ls, document)
+
+        message = f"HyGround reindexed {root} ({len(ls.index.documents)} documents)."
+        ls.window_show_message(
+            lsp.ShowMessageParams(type=lsp.MessageType.Info, message=message)
+        )
+        return {"ok": True, "root": str(root), "documents": len(ls.index.documents)}
+
 
 def _index_and_publish(server: HyGroundServer, uri: str, source: str) -> DocumentIndex:
     document = server.index.update_document(uri, source)
+    _publish_diagnostics(server, document)
+    return document
+
+
+def _publish_diagnostics(server: HyGroundServer, document: DocumentIndex) -> None:
     server.text_document_publish_diagnostics(
         lsp.PublishDiagnosticsParams(
-            uri=uri,
+            uri=document.uri,
             diagnostics=[diagnostic.to_lsp() for diagnostic in document.diagnostics],
         )
     )
-    return document
 
 
 def _completion_item(symbol: SymbolInfo, replace_range: lsp.Range) -> lsp.CompletionItem:

@@ -26,6 +26,7 @@ It is a clean rewrite inspired by Hyuga's useful ideas, but built around an expl
 - document symbols for local definitions
 - simple references across indexed Hy files
 - signature help for indexed Hy/Python callables
+- explicit workspace reindex command: `hyground.reindexWorkspace`
 
 ## Install / run
 
@@ -84,6 +85,16 @@ Once published or installed globally, change the command to:
 ```elisp
 (setq tbm/hyground-command '("uvx" "hyground"))
 ```
+
+If jump/hover data feels stale after adding files, changing imports, or installing
+packages into `.venv`, force a fresh index:
+
+```elisp
+(lsp-send-execute-command "hyground.reindexWorkspace" (vector (lsp--buffer-uri)))
+```
+
+This rebuilds the current workspace's Hy index and clears Python import/source
+resolution caches.
 
 ## Architecture
 

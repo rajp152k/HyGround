@@ -280,6 +280,36 @@ class WorkspaceIndex:
                 continue
         self.indexed_roots.add(root)
 
+    def reindex_root(self, root: Path, open_sources: dict[str, str] | None = None) -> list[DocumentIndex]:
+        """Force a fresh resolver and symbol index for ROOT.
+
+        This is the escape hatch for real editing sessions: new files, changed
+        imports, or newly installed venv packages can make old resolver misses
+        stale. Reindexing drops the root's Python resolver caches, rebuilds open
+        buffers from their in-memory text, and rereads project `.hy` files from
+        disk.
+        """
+        root = root.resolve()
+        open_sources = open_sources or {}
+        self.resolvers[root] = PythonResolver(root)
+        self.indexed_roots.discard(root)
+
+        for doc_uri in list(self.documents):
+            if self.root_for_uri(doc_uri).resolve() == root:
+                self.documents.pop(doc_uri, None)
+
+        resolver = self.resolver_for_root(root)
+        rebuilt: list[DocumentIndex] = []
+        for doc_uri, source in open_sources.items():
+            if self.root_for_uri(doc_uri).resolve() != root:
+                continue
+            document = DocumentIndex.build(doc_uri, source, resolver)
+            self.documents[doc_uri] = document
+            rebuilt.append(document)
+
+        self.ensure_project_index(root)
+        return rebuilt
+
     def symbols_for_completion(self, uri: str, prefix: str) -> list[SymbolInfo]:
         if "." in prefix:
             return self._attribute_completions(uri, prefix)
