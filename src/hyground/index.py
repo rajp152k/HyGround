@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import inspect
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable
@@ -63,22 +64,29 @@ class DocumentIndex:
             index._walk_form(form, resolver)
 
         if compile_forms:
-            index._record_compile_diagnostics(forms, source)
+            index._record_compile_diagnostics(forms, source, resolver)
         return index
 
-    def _record_compile_diagnostics(self, forms: list[object], source: str) -> None:
-        for form in forms:
-            try:
-                hy_compile(form, "__main__", filename=self.uri, source=source)
-            except Exception as exc:
-                diagnostic = _diagnostic_from_exception(exc)
-                if not any(
-                    d.message == diagnostic.message
-                    and d.line == diagnostic.line
-                    and d.character == diagnostic.character
-                    for d in self.diagnostics
-                ):
-                    self.diagnostics.append(diagnostic)
+    def _record_compile_diagnostics(
+        self,
+        forms: list[object],
+        source: str,
+        resolver: PythonResolver | None,
+    ) -> None:
+        context = resolver.import_context() if resolver is not None else nullcontext()
+        with context:
+            for form in forms:
+                try:
+                    hy_compile(form, "__main__", filename=self.uri, source=source)
+                except Exception as exc:
+                    diagnostic = _diagnostic_from_exception(exc)
+                    if not any(
+                        d.message == diagnostic.message
+                        and d.line == diagnostic.line
+                        and d.character == diagnostic.character
+                        for d in self.diagnostics
+                    ):
+                        self.diagnostics.append(diagnostic)
 
     def _walk_form(self, form: object, resolver: PythonResolver | None) -> None:
         if isinstance(form, Expression) and form:
@@ -99,8 +107,8 @@ class DocumentIndex:
             self._record_setv(form)
         elif head == "import" and resolver is not None:
             self._record_import(form, resolver)
-        elif head == "require":
-            self._record_require(form)
+        elif head == "require" and resolver is not None:
+            self._record_require(form, resolver)
 
     def _record_callable(self, form: Expression, head: str) -> None:
         if len(form) < 3 or not isinstance(form[1], Symbol):
@@ -149,82 +157,84 @@ class DocumentIndex:
                 )
 
     def _record_import(self, form: Expression, resolver: PythonResolver) -> None:
-        items = list(form[1:])
-        i = 0
-        while i < len(items):
-            model = items[i]
-            if isinstance(model, Keyword):
-                i += 1
-                continue
-            module_name = _module_name(model)
-            if not module_name:
-                i += 1
+        for spec in _parse_import_specs(list(form[1:])):
+            if spec.star:
+                self._record_star_import(spec.module, resolver)
                 continue
 
-            if i + 2 < len(items) and _is_keyword(items[i + 1], "as") and isinstance(items[i + 2], Symbol):
-                alias = str(items[i + 2])
-                self._add_symbol(resolver.module_symbol(alias, module_name))
-                i += 3
+            if spec.members:
+                for member in spec.members:
+                    self._add_symbol(resolver.object_symbol(member.visible, f"{spec.module}.{member.original}"))
                 continue
 
-            if i + 1 < len(items) and isinstance(items[i + 1], HyList):
-                self._record_import_members(module_name, items[i + 1], resolver)
-                i += 2
+            if spec.alias:
+                self._add_symbol(resolver.module_symbol(spec.alias, spec.module))
                 continue
 
             # `(import os.path)` makes the top-level package useful for dotted completion.
-            visible = module_name.split(".")[0] if "." in module_name else module_name
+            visible = spec.module.split(".")[0] if "." in spec.module else spec.module
             self._add_symbol(resolver.module_symbol(visible, visible))
-            self._add_symbol(resolver.module_symbol(module_name, module_name))
-            i += 1
+            self._add_symbol(resolver.module_symbol(spec.module, spec.module))
 
-    def _record_import_members(self, module_name: str, members: HyList, resolver: PythonResolver) -> None:
-        i = 0
-        values = list(members)
-        if len(values) == 1 and isinstance(values[0], Symbol) and str(values[0]) == "*":
-            module = resolver.import_module(module_name)
-            if module is None:
-                return
-            for py_name in getattr(module, "__all__", dir(module)):
-                if py_name.startswith("_"):
-                    continue
-                hy_name = hy.unmangle(py_name)
-                try:
-                    self._add_symbol(symbol_from_object(hy_name, getattr(module, py_name), detail=f"imported from {module_name}"))
-                except Exception:
-                    continue
+    def _record_star_import(self, module_name: str, resolver: PythonResolver) -> None:
+        module = resolver.import_module(module_name)
+        if module is None:
             return
-
-        while i < len(values):
-            member = values[i]
-            if not isinstance(member, Symbol):
-                i += 1
+        for py_name in getattr(module, "__all__", None) or dir(module):
+            if py_name.startswith("_"):
                 continue
-            original = str(member)
-            visible = original
-            if i + 2 < len(values) and _is_keyword(values[i + 1], "as") and isinstance(values[i + 2], Symbol):
-                visible = str(values[i + 2])
-                i += 3
-            else:
-                i += 1
-            self._add_symbol(resolver.object_symbol(visible, f"{module_name}.{original}"))
-
-    def _record_require(self, form: Expression) -> None:
-        # Required macros deserve completion even before full macro resolution exists.
-        if len(form) < 3:
-            return
-        module_name = _module_name(form[1])
-        spec = form[2]
-        if isinstance(spec, HyList):
-            for value in spec:
-                if isinstance(value, Symbol):
-                    self.symbols[str(value)] = SymbolInfo(
-                        name=str(value),
-                        kind=SymbolKind.LOCAL_MACRO,
-                        detail=f"required macro from {module_name}",
-                        documentation=f"Macro required from `{module_name}`.",
-                        source=SourceRange.from_hy_model(self.uri, value),
+            hy_name = hy.unmangle(py_name)
+            try:
+                self._add_symbol(
+                    symbol_from_object(
+                        hy_name,
+                        getattr(module, py_name),
+                        detail=f"imported from {module_name}",
                     )
+                )
+            except Exception:
+                continue
+
+    def _record_require(self, form: Expression, resolver: PythonResolver) -> None:
+        for spec in _parse_require_specs(list(form[1:])):
+            if spec.prefix_all:
+                prefix = spec.alias or spec.module
+                for symbol in resolver.macro_candidates(spec.module, dotted_prefix=prefix):
+                    self._add_symbol(symbol)
+
+            if spec.star:
+                for symbol in resolver.macro_candidates(spec.module):
+                    self._add_symbol(symbol)
+
+            for member in spec.members:
+                symbol = resolver.macro_symbol(member.visible, spec.module, member.original)
+                self._add_symbol(symbol or self._provisional_required_macro(spec.module, member))
+
+            if spec.reader_star:
+                for symbol in resolver.reader_macro_candidates(spec.module, include_hash=True):
+                    self._add_symbol(symbol)
+
+            for reader in spec.readers:
+                visible = f"#{reader.original}"
+                symbol = resolver.reader_macro_symbol(visible, spec.module, reader.original)
+                self._add_symbol(symbol or self._provisional_required_macro(spec.module, reader, reader=True))
+
+    def _provisional_required_macro(
+        self,
+        module_name: str,
+        member: "_ImportMember",
+        reader: bool = False,
+    ) -> SymbolInfo:
+        visible = f"#{member.original}" if reader else member.visible
+        kind = SymbolKind.READER_MACRO if reader else SymbolKind.LOCAL_MACRO
+        noun = "Reader macro" if reader else "Macro"
+        return SymbolInfo(
+            name=visible,
+            kind=kind,
+            detail=f"required {'reader macro' if reader else 'macro'} from {module_name}",
+            documentation=f"{noun} required from `{module_name}`.",
+            source=SourceRange.from_hy_model(self.uri, member.model),
+        )
 
     def _add_symbol(self, symbol: SymbolInfo | None) -> None:
         if symbol is not None:
@@ -388,6 +398,169 @@ class WorkspaceIndex:
         if obj is not None:
             return symbol_from_object(name, obj)
         return None
+
+
+@dataclass(frozen=True)
+class _ImportMember:
+    original: str
+    visible: str
+    model: object
+
+
+@dataclass(frozen=True)
+class _ImportSpec:
+    module: str
+    alias: str = ""
+    members: tuple[_ImportMember, ...] = ()
+    star: bool = False
+
+
+@dataclass(frozen=True)
+class _RequireSpec:
+    module: str
+    alias: str = ""
+    prefix_all: bool = False
+    members: tuple[_ImportMember, ...] = ()
+    star: bool = False
+    readers: tuple[_ImportMember, ...] = ()
+    reader_star: bool = False
+
+
+def _parse_import_specs(items: list[object]) -> list[_ImportSpec]:
+    specs: list[_ImportSpec] = []
+    i = 0
+    while i < len(items):
+        module_name = _module_name(items[i])
+        if not module_name:
+            i += 1
+            continue
+
+        alias = ""
+        members: tuple[_ImportMember, ...] = ()
+        star = False
+        i += 1
+
+        if i + 1 < len(items) and _is_keyword(items[i], "as") and isinstance(items[i + 1], Symbol):
+            alias = str(items[i + 1])
+            i += 2
+        elif i < len(items) and isinstance(items[i], HyList):
+            members, star = _parse_member_selector(items[i])
+            i += 1
+        elif i < len(items) and _is_star(items[i]):
+            star = True
+            i += 1
+
+        specs.append(_ImportSpec(module=module_name, alias=alias, members=members, star=star))
+    return specs
+
+
+def _parse_require_specs(items: list[object]) -> list[_RequireSpec]:
+    specs: list[_RequireSpec] = []
+    i = 0
+    while i < len(items):
+        module_name = _module_name(items[i])
+        if not module_name:
+            i += 1
+            continue
+
+        i += 1
+        alias = ""
+        members: list[_ImportMember] = []
+        readers: list[_ImportMember] = []
+        star = False
+        reader_star = False
+        saw_regular_selector = False
+        saw_reader_selector = False
+
+        while i < len(items):
+            item = items[i]
+            if i + 1 < len(items) and _is_keyword(item, "as") and isinstance(items[i + 1], Symbol):
+                alias = str(items[i + 1])
+                i += 2
+                continue
+            if i + 1 < len(items) and _is_keyword(item, "macros"):
+                selected, selected_star = _parse_selector_model(items[i + 1])
+                members.extend(selected)
+                star = star or selected_star
+                saw_regular_selector = True
+                i += 2
+                continue
+            if i + 1 < len(items) and _is_keyword(item, "readers"):
+                selected, selected_star = _parse_selector_model(items[i + 1])
+                readers.extend(selected)
+                reader_star = reader_star or selected_star
+                saw_reader_selector = True
+                i += 2
+                continue
+            if isinstance(item, HyList):
+                selected, selected_star = _parse_member_selector(item)
+                members.extend(selected)
+                star = star or selected_star
+                saw_regular_selector = True
+                i += 1
+                continue
+            if _is_star(item):
+                star = True
+                saw_regular_selector = True
+                i += 1
+                continue
+            if isinstance(item, Keyword):
+                i += 1
+                continue
+            break
+
+        prefix_all = not saw_regular_selector and not saw_reader_selector
+        specs.append(
+            _RequireSpec(
+                module=module_name,
+                alias=alias,
+                prefix_all=prefix_all,
+                members=tuple(members),
+                star=star,
+                readers=tuple(readers),
+                reader_star=reader_star,
+            )
+        )
+    return specs
+
+
+def _parse_selector_model(model: object) -> tuple[list[_ImportMember], bool]:
+    if isinstance(model, HyList):
+        members, star = _parse_member_selector(model)
+        return list(members), star
+    if _is_star(model):
+        return [], True
+    if isinstance(model, Symbol):
+        name = str(model)
+        return [_ImportMember(name, name, model)], False
+    return [], False
+
+
+def _parse_member_selector(values: HyList) -> tuple[tuple[_ImportMember, ...], bool]:
+    raw = list(values)
+    if len(raw) == 1 and _is_star(raw[0]):
+        return (), True
+
+    members: list[_ImportMember] = []
+    i = 0
+    while i < len(raw):
+        value = raw[i]
+        if not isinstance(value, Symbol):
+            i += 1
+            continue
+        original = str(value)
+        visible = original
+        if i + 2 < len(raw) and _is_keyword(raw[i + 1], "as") and isinstance(raw[i + 2], Symbol):
+            visible = str(raw[i + 2])
+            i += 3
+        else:
+            i += 1
+        members.append(_ImportMember(original=original, visible=visible, model=value))
+    return tuple(members), False
+
+
+def _is_star(model: object) -> bool:
+    return isinstance(model, Symbol) and str(model) == "*"
 
 
 _DEFCORE_DETAIL = "Hy core form"

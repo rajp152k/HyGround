@@ -6,6 +6,7 @@ from lsprotocol import types as lsp
 from pygls.lsp.server import LanguageServer
 
 from . import __version__
+from .completion_context import CompletionContext, completion_context
 from .index import DocumentIndex, WorkspaceIndex
 from .model import SymbolInfo, SymbolKind
 from .word import enclosing_call, occurrences, word_at, word_prefix, word_range_at
@@ -50,7 +51,7 @@ def _register_features(server: HyGroundServer) -> None:
 
     @server.feature(
         lsp.TEXT_DOCUMENT_COMPLETION,
-        lsp.CompletionOptions(trigger_characters=[".", " ", "-", "_", ":"]),
+        lsp.CompletionOptions(trigger_characters=[".", " ", "-", "_", ":", "[", "#"]),
     )
     def completion(params: lsp.CompletionParams) -> lsp.CompletionList:
         uri = params.text_document.uri
@@ -63,9 +64,10 @@ def _register_features(server: HyGroundServer) -> None:
             ),
             end=params.position,
         )
+        context = completion_context(document.source, params.position.line, params.position.character)
         items = [
             _completion_item(symbol, replace_range)
-            for symbol in server.index.symbols_for_completion(uri, prefix)
+            for symbol in _symbols_for_completion(server, uri, prefix, context)
         ]
         return lsp.CompletionList(is_incomplete=False, items=items)
 
@@ -278,6 +280,24 @@ def _publish_diagnostics(server: HyGroundServer, document: DocumentIndex) -> Non
     )
 
 
+def _symbols_for_completion(
+    server: HyGroundServer,
+    uri: str,
+    prefix: str,
+    context: CompletionContext,
+) -> list[SymbolInfo]:
+    resolver = server.index.resolver_for_root(server.index.root_for_uri(uri))
+    if context.kind in {"import-module", "require-module"}:
+        return resolver.module_candidates(prefix)
+    if context.kind == "import-member" and context.module:
+        return resolver.member_candidates(context.module, prefix)
+    if context.kind == "require-macro" and context.module:
+        return resolver.macro_candidates(context.module, prefix)
+    if context.kind == "require-reader" and context.module:
+        return resolver.reader_macro_candidates(context.module, prefix)
+    return server.index.symbols_for_completion(uri, prefix)
+
+
 def _completion_item(symbol: SymbolInfo, replace_range: lsp.Range) -> lsp.CompletionItem:
     return lsp.CompletionItem(
         label=symbol.name,
@@ -297,6 +317,7 @@ def _completion_kind(kind: SymbolKind) -> lsp.CompletionItemKind:
         SymbolKind.PYTHON_BUILTIN: lsp.CompletionItemKind.Function,
         SymbolKind.LOCAL_FUNCTION: lsp.CompletionItemKind.Function,
         SymbolKind.LOCAL_MACRO: lsp.CompletionItemKind.Keyword,
+        SymbolKind.READER_MACRO: lsp.CompletionItemKind.Keyword,
         SymbolKind.LOCAL_CLASS: lsp.CompletionItemKind.Class,
         SymbolKind.LOCAL_VARIABLE: lsp.CompletionItemKind.Variable,
         SymbolKind.MODULE: lsp.CompletionItemKind.Module,
@@ -309,6 +330,7 @@ def _symbol_kind(kind: SymbolKind) -> lsp.SymbolKind:
         SymbolKind.PYTHON_BUILTIN: lsp.SymbolKind.Function,
         SymbolKind.LOCAL_FUNCTION: lsp.SymbolKind.Function,
         SymbolKind.LOCAL_MACRO: lsp.SymbolKind.Function,
+        SymbolKind.READER_MACRO: lsp.SymbolKind.Function,
         SymbolKind.LOCAL_CLASS: lsp.SymbolKind.Class,
         SymbolKind.LOCAL_VARIABLE: lsp.SymbolKind.Variable,
         SymbolKind.MODULE: lsp.SymbolKind.Module,
