@@ -157,7 +157,9 @@ def _register_features(server: HyGroundServer) -> None:
         name = word_at(document.source, params.position.line, params.position.character)
         if not name:
             return []
-        return _reference_locations(server, name)
+        symbol = server.index.resolve(uri, name)
+        include_declaration = params.context.include_declaration if params.context else True
+        return _reference_locations(server, uri, name, symbol, include_declaration=include_declaration)
 
     @server.feature(lsp.TEXT_DOCUMENT_PREPARE_RENAME)
     def prepare_rename(params: lsp.PrepareRenameParams) -> lsp.Range | None:
@@ -166,7 +168,7 @@ def _register_features(server: HyGroundServer) -> None:
         name = word_at(document.source, params.position.line, params.position.character)
         symbol = server.index.resolve(uri, name) if name else None
         word_range = word_range_at(document.source, params.position.line, params.position.character)
-        if symbol is None or word_range is None or not _renamable(symbol):
+        if symbol is None or word_range is None or not _renamable_at_uri(symbol, uri):
             return None
         start, end = word_range
         return lsp.Range(
@@ -180,10 +182,17 @@ def _register_features(server: HyGroundServer) -> None:
         document = server.workspace.get_text_document(uri)
         old_name = word_at(document.source, params.position.line, params.position.character)
         symbol = server.index.resolve(uri, old_name) if old_name else None
-        if symbol is None or not _renamable(symbol) or not params.new_name:
+        if symbol is None or not _renamable_at_uri(symbol, uri) or not params.new_name:
             return None
         changes: dict[str, list[lsp.TextEdit]] = {}
-        for location in _reference_locations(server, old_name):
+        for location in _reference_locations(
+            server,
+            uri,
+            old_name,
+            symbol,
+            only_uri=symbol.source.uri if symbol.source else uri,
+            include_declaration=True,
+        ):
             changes.setdefault(location.uri, []).append(
                 lsp.TextEdit(range=location.range, new_text=params.new_name)
             )
@@ -240,9 +249,20 @@ def _register_features(server: HyGroundServer) -> None:
         return {"ok": True, "root": str(root), "documents": len(ls.index.documents)}
 
 
-def _reference_locations(server: HyGroundServer, name: str) -> list[lsp.Location]:
+def _reference_locations(
+    server: HyGroundServer,
+    request_uri: str,
+    name: str,
+    symbol: SymbolInfo | None = None,
+    only_uri: str | None = None,
+    include_declaration: bool = True,
+) -> list[lsp.Location]:
     locations: list[lsp.Location] = []
-    for doc_uri, indexed in server.index.documents.items():
+    candidate_uris = _reference_candidate_uris(server, request_uri, symbol, only_uri)
+    for doc_uri in candidate_uris:
+        indexed = server.index.documents.get(doc_uri)
+        if indexed is None:
+            continue
         for line, start, end in occurrences(indexed.source, name):
             locations.append(
                 lsp.Location(
@@ -253,7 +273,40 @@ def _reference_locations(server: HyGroundServer, name: str) -> list[lsp.Location
                     ),
                 )
             )
+
+    if include_declaration and symbol is not None and symbol.source is not None:
+        declaration = symbol.source.to_location()
+        if not _contains_location(locations, declaration):
+            locations.insert(0, declaration)
+    elif not include_declaration and symbol is not None and symbol.source is not None:
+        locations = [location for location in locations if not _same_location(location, symbol.source.to_location())]
+
     return locations
+
+
+def _reference_candidate_uris(
+    server: HyGroundServer,
+    request_uri: str,
+    symbol: SymbolInfo | None,
+    only_uri: str | None,
+) -> list[str]:
+    if only_uri is not None:
+        return [only_uri]
+    if symbol is not None and symbol.source is not None and _renamable(symbol):
+        return list(dict.fromkeys([request_uri, symbol.source.uri]))
+    return list(server.index.documents)
+
+
+def _contains_location(locations: list[lsp.Location], needle: lsp.Location) -> bool:
+    return any(_same_location(location, needle) for location in locations)
+
+
+def _same_location(left: lsp.Location, right: lsp.Location) -> bool:
+    return left.uri == right.uri and left.range == right.range
+
+
+def _renamable_at_uri(symbol: SymbolInfo, uri: str) -> bool:
+    return _renamable(symbol) and symbol.source is not None and symbol.source.uri == uri
 
 
 def _renamable(symbol: SymbolInfo) -> bool:

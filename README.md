@@ -38,9 +38,9 @@ pipx install hyground
 | `textDocument/definition` | supported | Local/project Hy definitions, module-aware Hy imports, Python source via `inspect`, typeshed fallback for builtins/C extensions |
 | `textDocument/documentSymbol` | supported | Definitions in the current Hy document |
 | `workspace/symbol` | supported | Indexed Hy definitions across the workspace |
-| `textDocument/references` | partial | Name-based references across indexed Hy files |
+| `textDocument/references` | partial | Scoped to the resolved declaration document for local/project Hy symbols; broader fallback for other names |
 | `textDocument/signatureHelp` | partial | Available when a signature is known from HyGround's symbol model or `inspect` |
-| `textDocument/rename` | partial | Local Hy symbols only; implemented as name-based workspace edits |
+| `textDocument/rename` | partial | Conservative document-local rename for symbols defined in the current Hy document |
 | `textDocument/publishDiagnostics` | partial | Hy reader/compiler diagnostics with stable codes and best-effort ranges |
 | `workspace/executeCommand` | supported | `hyground.reindexWorkspace` |
 
@@ -201,7 +201,7 @@ examples/smoke.hy
 ## Known limitations
 
 - Hy project symbol lookup is module-aware for explicit `import` forms, but unqualified fallback lookup is still name-based.
-- References and rename are lexical/name-based and can produce false positives.
+- References and rename are conservative and not yet backed by a full lexical scope graph; they may miss valid cross-module references.
 - Diagnostics use best-effort ranges; many Hy reader/compiler exceptions do not expose full end positions yet.
 - Python object resolution may import modules when `allow-workspace-imports` is enabled. Static Python fallback covers top-level workspace symbols, but does not attempt full type inference or arbitrary attribute flow.
 - Typeshed jumps target interface stubs, not C implementation source.
@@ -213,7 +213,7 @@ Work required to move from the current implementation to production-grade toolin
 
 1. Replace manual Hy core-form documentation with generated or upstream-provided documentation data.
 2. Deepen Hy symbol resolution for lexical scopes, requires, aliases, and shadowing beyond explicit import bindings.
-3. Replace name-based references/rename with scoped symbol references.
+3. Replace conservative references/rename with a full scoped symbol-reference graph.
 4. Improve diagnostic recovery for incomplete forms and enrich categories beyond reader/compiler errors.
 5. Continue expanding context-aware completions for keywords, attributes, macros, and reader macros.
 6. Expand static Python source/stub resolution beyond top-level workspace symbols.
