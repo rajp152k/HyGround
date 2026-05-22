@@ -196,6 +196,7 @@ def test_lsp_end_to_end_features(tmp_path: Path) -> None:
         'def make_thing(value):\n    """Make thing docs from Python."""\n    return f"thing-{value}"\n'
     )
     (tmp_path / "lib.hy").write_text('(defn helper []\n  "Helper docs from project Hy"\n  1)\n')
+    (tmp_path / "unrelated.hy").write_text('(defn foo []\n  "Unrelated foo docs"\n  0)\n')
     main = tmp_path / "main.hy"
     source = """(import pathlib [Path])
 (import json)
@@ -318,6 +319,13 @@ json.du
             {**text_document_position(uri, source, "foo", 1), "context": {"includeDeclaration": True}},
         )
         assert len(references) >= 2
+        assert {reference["uri"] for reference in references} == {uri}
+
+        helper_prepare_rename = client.request(
+            "textDocument/prepareRename",
+            text_document_position(uri, source, "helper", 2),
+        )
+        assert helper_prepare_rename is None
 
         prepare_rename = client.request(
             "textDocument/prepareRename",
@@ -329,6 +337,7 @@ json.du
             "textDocument/rename",
             {**text_document_position(uri, source, "foo", 1), "newName": "foo-renamed"},
         )
+        assert set(rename["changes"]) == {uri}
         rename_edits = rename["changes"][uri]
         assert len([edit for edit in rename_edits if edit["newText"] == "foo-renamed"]) >= 2
 
