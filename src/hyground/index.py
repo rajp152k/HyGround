@@ -11,7 +11,7 @@ from typing import Iterable
 
 import hy
 from hy.compiler import hy_compile
-from hy.models import Expression, Keyword, List as HyList, String, Symbol
+from hy.models import Dict as HyDict, Expression, Keyword, List as HyList, String, Symbol
 from lsprotocol import types as lsp
 from pygls import uris
 
@@ -118,8 +118,8 @@ class DocumentIndex:
             self._record_callable(form, head)
         elif head == "defclass":
             self._record_class(form)
-        elif head == "setv":
-            self._record_setv(form)
+        elif head in {"setv", "setx"}:
+            self._record_assignment(form, head)
         elif head == "import" and resolver is not None:
             self._record_import(form, resolver)
         elif head == "require" and resolver is not None:
@@ -179,17 +179,15 @@ class DocumentIndex:
             module=self.module,
         )
 
-    def _record_setv(self, form: Expression) -> None:
-        # Hy supports complex assignment targets. MVP: record simple symbol targets.
+    def _record_assignment(self, form: Expression, head: str) -> None:
         for target in form[1::2]:
-            if isinstance(target, Symbol):
-                name = str(target)
+            for name, model in _assignment_target_models(target):
                 self.symbols[name] = SymbolInfo(
                     name=name,
                     kind=SymbolKind.LOCAL_VARIABLE,
-                    detail="local setv",
-                    documentation="Local value bound with setv.",
-                    source=SourceRange.from_hy_model(self.uri, target),
+                    detail=f"local {head}",
+                    documentation=f"Local value bound with {head}.",
+                    source=SourceRange.from_hy_model(self.uri, model),
                     module=self.module,
                 )
 
@@ -1077,6 +1075,32 @@ def _parameter_models(params: object) -> list[tuple[str, object]]:
             if head in {"unpack-iterable", "unpack-mapping"} and isinstance(item[1], Symbol):
                 out.append((str(item[1]), item[1]))
     return out
+
+
+def _assignment_target_models(target: object) -> list[tuple[str, object]]:
+    if isinstance(target, Symbol):
+        return [(str(target), target)]
+    if isinstance(target, HyList):
+        out: list[tuple[str, object]] = []
+        for item in target:
+            out.extend(_assignment_target_models(item))
+        return out
+    if isinstance(target, HyDict):
+        out: list[tuple[str, object]] = []
+        values = list(target.values()) if hasattr(target, "values") else list(target)[1::2]
+        for item in values:
+            out.extend(_assignment_target_models(item))
+        return out
+    if isinstance(target, Expression) and target:
+        head = _symbol_name(target[0])
+        if head == ",":
+            out: list[tuple[str, object]] = []
+            for item in target[1:]:
+                out.extend(_assignment_target_models(item))
+            return out
+        if head in {"unpack-iterable", "unpack-mapping"} and len(target) >= 2:
+            return _assignment_target_models(target[1])
+    return []
 
 
 def _leading_docstring(body: Iterable[object]) -> str:

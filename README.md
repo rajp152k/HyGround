@@ -262,7 +262,7 @@ examples/smoke.hy
 
 ## Known limitations
 
-- Hy project symbol lookup is module-aware for explicit `import` forms, and basic callable parameters are position-scoped, but many lexical forms still need a full scope graph.
+- Hy project symbol lookup is module-aware for explicit `import` forms, and basic callable parameters are position-scoped. Common assignment/destructuring targets are indexed, but many lexical forms still need a full scope graph.
 - References and rename are conservative and not yet backed by a full lexical scope graph; they may miss valid cross-module references. Parameter rename is intentionally disabled until scope-limited edits are implemented.
 - Diagnostics use best-effort ranges; many Hy reader/compiler exceptions do not expose full end positions yet. Index recovery preserves complete forms before a reader error, but not forms after the error.
 - Python object resolution may import modules when `allow-workspace-imports` is enabled. Static Python fallback covers top-level workspace symbols, but does not attempt full type inference or arbitrary attribute flow.
