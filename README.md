@@ -41,7 +41,7 @@ pipx install hyground
 | `textDocument/references` | partial | Name-based references across indexed Hy files |
 | `textDocument/signatureHelp` | partial | Available when a signature is known from HyGround's symbol model or `inspect` |
 | `textDocument/rename` | partial | Local Hy symbols only; implemented as name-based workspace edits |
-| `textDocument/publishDiagnostics` | partial | Hy reader diagnostics and basic compile diagnostics |
+| `textDocument/publishDiagnostics` | partial | Hy reader/compiler diagnostics with stable codes and best-effort ranges |
 | `workspace/executeCommand` | supported | `hyground.reindexWorkspace` |
 
 ## Python resolution
@@ -199,7 +199,7 @@ examples/smoke.hy
 
 - Hy project symbol lookup is module-aware for explicit `import` forms, but unqualified fallback lookup is still name-based.
 - References and rename are lexical/name-based and can produce false positives.
-- Diagnostics use coarse ranges for many Hy reader/compiler errors.
+- Diagnostics use best-effort ranges; many Hy reader/compiler exceptions do not expose full end positions yet.
 - Python object resolution may import modules when `allow-workspace-imports` is enabled. A richer static resolver is still needed for packages that are unsafe or expensive to import.
 - Typeshed jumps target interface stubs, not C implementation source.
 - Hy core form documentation is currently explicit data in `core_docs.py`. This is a stopgap. The production path should derive these docs from Hy's own documentation/source metadata or an upstream-supported machine-readable source, so HyGround does not maintain a parallel manual table.
@@ -211,7 +211,7 @@ Work required to move from the current implementation to production-grade toolin
 1. Replace manual Hy core-form documentation with generated or upstream-provided documentation data.
 2. Deepen Hy symbol resolution for lexical scopes, requires, aliases, and shadowing beyond explicit import bindings.
 3. Replace name-based references/rename with scoped symbol references.
-4. Improve diagnostics with precise ranges, stable error categories, and recovery for incomplete forms.
+4. Improve diagnostic recovery for incomplete forms and enrich categories beyond reader/compiler errors.
 5. Continue expanding context-aware completions for keywords, attributes, macros, and reader macros.
 6. Add static Python source/stub resolution paths that do not import user modules by default.
 7. Expand configuration for multiple workspace roots, client-supplied settings, and per-feature resolver behavior.

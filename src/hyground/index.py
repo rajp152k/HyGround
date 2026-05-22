@@ -26,15 +26,19 @@ class ParseDiagnostic:
     message: str
     line: int = 0
     character: int = 0
+    end_line: int = 0
+    end_character: int = 1
+    code: str = "hyground"
 
     def to_lsp(self) -> lsp.Diagnostic:
         return lsp.Diagnostic(
             range=lsp.Range(
                 start=lsp.Position(line=self.line, character=self.character),
-                end=lsp.Position(line=self.line, character=self.character + 1),
+                end=lsp.Position(line=self.end_line, character=self.end_character),
             ),
             message=self.message,
             source="hyground",
+            code=self.code,
             severity=lsp.DiagnosticSeverity.Error,
         )
 
@@ -61,7 +65,7 @@ class DocumentIndex:
         try:
             forms = list(hy.read_many(source, filename=uri))
         except Exception as exc:  # Hy parse exceptions don't share a stable base type.
-            index.diagnostics.append(_diagnostic_from_exception(exc))
+            index.diagnostics.append(_diagnostic_from_exception(exc, source, code="hy-reader"))
             return index
 
         for form in forms:
@@ -83,11 +87,12 @@ class DocumentIndex:
                 try:
                     hy_compile(form, "__main__", filename=self.uri, source=source)
                 except Exception as exc:
-                    diagnostic = _diagnostic_from_exception(exc)
+                    diagnostic = _diagnostic_from_exception(exc, source, code="hy-compiler")
                     if not any(
                         d.message == diagnostic.message
                         and d.line == diagnostic.line
                         and d.character == diagnostic.character
+                        and d.code == diagnostic.code
                         for d in self.diagnostics
                     ):
                         self.diagnostics.append(diagnostic)
@@ -913,11 +918,33 @@ def _load_builtin_symbols() -> dict[str, SymbolInfo]:
     return symbols
 
 
-def _diagnostic_from_exception(exc: Exception) -> ParseDiagnostic:
+def _diagnostic_from_exception(exc: Exception, source: str, code: str) -> ParseDiagnostic:
     line = max(int(getattr(exc, "lineno", 1) or 1) - 1, 0)
     character = max(int(getattr(exc, "offset", 1) or 1) - 1, 0)
+    end_line_attr = getattr(exc, "end_lineno", None)
+    end_offset_attr = getattr(exc, "end_offset", None)
+    end_line = max(int(end_line_attr or line + 1) - 1, 0)
+    end_character = max(int(end_offset_attr or character + 2) - 1, 0)
+
+    lines = source.splitlines() or [source]
+    line = min(line, len(lines) - 1)
+    end_line = min(max(end_line, line), len(lines) - 1)
+    character = min(character, len(lines[line]))
+    end_character = min(end_character, len(lines[end_line]))
+    if end_line == line and end_character <= character:
+        end_character = min(character + 1, len(lines[line]))
+        if end_character <= character:
+            end_character = character + 1
+
     message = getattr(exc, "msg", None) or str(exc)
-    return ParseDiagnostic(message=message, line=line, character=character)
+    return ParseDiagnostic(
+        message=message,
+        line=line,
+        character=character,
+        end_line=end_line,
+        end_character=end_character,
+        code=code,
+    )
 
 
 def _symbol_name(model: object) -> str:

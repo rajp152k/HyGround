@@ -57,14 +57,24 @@ def test_parse_diagnostic() -> None:
     document = WorkspaceIndex().update_document(URI, "(if True 1")
 
     assert document.diagnostics
-    assert "Premature end" in document.diagnostics[0].message
+    diagnostic = document.diagnostics[0]
+    assert "Premature end" in diagnostic.message
+    assert diagnostic.code == "hy-reader"
+    assert diagnostic.line == 0
+    assert diagnostic.character == 9
+    assert diagnostic.end_line == 0
+    assert diagnostic.end_character == 10
 
 
 def test_compile_diagnostic() -> None:
     document = WorkspaceIndex().update_document(URI, "(if True 1)\n")
 
     assert document.diagnostics
-    assert "parse error for pattern macro 'if'" in document.diagnostics[0].message
+    diagnostic = document.diagnostics[0]
+    assert "parse error for pattern macro 'if'" in diagnostic.message
+    assert diagnostic.code == "hy-compiler"
+    assert diagnostic.line == 0
+    assert diagnostic.end_character > diagnostic.character
 
 
 def test_python_import_completion_hover_and_definition() -> None:
