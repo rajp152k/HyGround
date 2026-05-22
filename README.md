@@ -132,7 +132,21 @@ In Emacs/lsp-mode:
 
 Automatic watched-file reindexing and the manual command share the same rebuild path: clear Python resolver/static caches, reload configuration, rebuild open Hy buffers from editor text, reread project `.hy` files from disk, and republish diagnostics.
 
-## Emacs / lsp-mode
+## Editor integration
+
+HyGround is a stdio language server. Use an installed command:
+
+```bash
+uvx hyground
+```
+
+or a development checkout command:
+
+```bash
+uv --directory /path/to/HyGround run hyground
+```
+
+### Emacs / lsp-mode
 
 Development checkout configuration:
 
@@ -162,6 +176,48 @@ For an installed package, use:
 ```elisp
 (setq hyground-command '("uvx" "hyground"))
 ```
+
+### Neovim built-in LSP
+
+Minimal Neovim 0.11+ setup:
+
+```lua
+vim.filetype.add({ extension = { hy = "hy" } })
+
+vim.lsp.config("hyground", {
+  cmd = { "uvx", "hyground" },
+  filetypes = { "hy" },
+  root_markers = { "pyproject.toml", "uv.lock", ".git" },
+})
+
+vim.lsp.enable("hyground")
+```
+
+For a development checkout, replace `cmd` with:
+
+```lua
+cmd = { "uv", "--directory", "/path/to/HyGround", "run", "hyground" }
+```
+
+### Helix
+
+Add a language server entry and attach it to Hy in `languages.toml`:
+
+```toml
+[language-server.hyground]
+command = "uvx"
+args = ["hyground"]
+
+[[language]]
+name = "hy"
+scope = "source.hy"
+file-types = ["hy"]
+language-servers = ["hyground"]
+```
+
+### VS Code and generic clients
+
+HyGround speaks standard LSP over stdio, but the project does not yet ship a VS Code extension. Use any client that can launch a stdio server with command `uvx hyground`, language id `hy`, and file pattern `*.hy`.
 
 ## Architecture
 
