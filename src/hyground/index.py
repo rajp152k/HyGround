@@ -49,6 +49,7 @@ class DocumentIndex:
     source: str
     module: str = ""
     symbols: dict[str, SymbolInfo] = field(default_factory=dict)
+    scoped_symbols: list["_ScopedSymbol"] = field(default_factory=list)
     imports: list["_HyImportBinding"] = field(default_factory=list)
     diagnostics: list[ParseDiagnostic] = field(default_factory=list)
 
@@ -142,6 +143,24 @@ class DocumentIndex:
             source=SourceRange.from_hy_model(self.uri, form[1]),
             module=self.module,
         )
+        self._record_parameters(raw_name, form[2], form)
+
+    def _record_parameters(self, callable_name: str, params: object, scope_model: object) -> None:
+        scope = SourceRange.from_hy_model(self.uri, scope_model)
+        for name, model in _parameter_models(params):
+            self.scoped_symbols.append(
+                _ScopedSymbol(
+                    symbol=SymbolInfo(
+                        name=name,
+                        kind=SymbolKind.PARAMETER,
+                        detail=f"parameter of {callable_name}",
+                        documentation=f"Parameter `{name}` of `{callable_name}`.",
+                        source=SourceRange.from_hy_model(self.uri, model),
+                        module=self.module,
+                    ),
+                    scope=scope,
+                )
+            )
 
     def _record_class(self, form: Expression) -> None:
         if len(form) < 2 or not isinstance(form[1], Symbol):
@@ -423,7 +442,13 @@ class WorkspaceIndex:
         self.ensure_project_index(root)
         return rebuilt
 
-    def symbols_for_completion(self, uri: str, prefix: str) -> list[SymbolInfo]:
+    def symbols_for_completion(
+        self,
+        uri: str,
+        prefix: str,
+        line: int | None = None,
+        character: int | None = None,
+    ) -> list[SymbolInfo]:
         if "." in prefix:
             return self._attribute_completions(uri, prefix)
 
@@ -432,6 +457,8 @@ class WorkspaceIndex:
         symbol_sources = []
         if uri in self.documents:
             document = self.documents[uri]
+            if line is not None and character is not None:
+                symbol_sources.append(self._scoped_symbols_at(document, line, character))
             symbol_sources.append(document.symbols.values())
             symbol_sources.append(self._hy_import_completion_symbols(uri, document, prefix))
         symbol_sources.extend(document.symbols.values() for doc_uri, document in self.documents.items() if doc_uri != uri)
@@ -452,6 +479,25 @@ class WorkspaceIndex:
                 out.append(symbol)
 
         return sorted(out, key=lambda s: (s.name.startswith("_"), s.name))
+
+    def _scoped_symbols_at(self, document: DocumentIndex, line: int, character: int) -> list[SymbolInfo]:
+        return [scoped.symbol for scoped in document.scoped_symbols if scoped.contains(line, character)]
+
+    def _resolve_scoped(self, document: DocumentIndex, name: str, line: int, character: int) -> SymbolInfo | None:
+        matches = [
+            scoped
+            for scoped in document.scoped_symbols
+            if scoped.symbol.name == name and scoped.contains(line, character)
+        ]
+        if not matches:
+            return None
+        return min(
+            matches,
+            key=lambda scoped: (
+                scoped.scope.end_line - scoped.scope.start_line,
+                scoped.scope.end_character - scoped.scope.start_character,
+            ),
+        ).symbol
 
     def _hy_import_completion_symbols(
         self,
@@ -616,12 +662,22 @@ class WorkspaceIndex:
                 return symbol
         return None
 
-    def resolve(self, uri: str, name: str) -> SymbolInfo | None:
+    def resolve(
+        self,
+        uri: str,
+        name: str,
+        line: int | None = None,
+        character: int | None = None,
+    ) -> SymbolInfo | None:
         if "." in name:
             resolved = self._resolve_dotted(uri, name)
             if resolved is not None:
                 return resolved
         document = self.documents.get(uri)
+        if document and line is not None and character is not None:
+            scoped = self._resolve_scoped(document, name, line, character)
+            if scoped is not None:
+                return scoped
         if document and name in document.symbols:
             return document.symbols[name]
         if document:
@@ -672,6 +728,17 @@ class WorkspaceIndex:
         if obj is not None:
             return symbol_from_object(name, obj)
         return None
+
+
+@dataclass(frozen=True)
+class _ScopedSymbol:
+    symbol: SymbolInfo
+    scope: SourceRange
+
+    def contains(self, line: int, character: int) -> bool:
+        starts_before = (self.scope.start_line, self.scope.start_character) <= (line, character)
+        ends_after = (line, character) <= (self.scope.end_line, self.scope.end_character)
+        return starts_before and ends_after
 
 
 @dataclass(frozen=True)
@@ -992,6 +1059,24 @@ def _callable_signature(head: str, raw_name: str, visible_name: str, params: str
     if head == "defreader":
         return f"(defreader {raw_name} {params})"
     return f"({visible_name} {params})"
+
+
+def _parameter_models(params: object) -> list[tuple[str, object]]:
+    if not isinstance(params, HyList):
+        return []
+    out: list[tuple[str, object]] = []
+    for item in params:
+        if isinstance(item, Symbol):
+            name = str(item)
+            if name not in {"/", "*"}:
+                out.append((name, item))
+        elif isinstance(item, HyList) and item and isinstance(item[0], Symbol):
+            out.append((str(item[0]), item[0]))
+        elif isinstance(item, Expression) and len(item) >= 2:
+            head = _symbol_name(item[0])
+            if head in {"unpack-iterable", "unpack-mapping"} and isinstance(item[1], Symbol):
+                out.append((str(item[1]), item[1]))
+    return out
 
 
 def _leading_docstring(body: Iterable[object]) -> str:

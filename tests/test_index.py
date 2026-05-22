@@ -66,6 +66,34 @@ def test_local_definition_docs_and_definition_range() -> None:
     assert foo.source.start_character == 6
 
 
+def test_parameter_resolution_is_position_scoped() -> None:
+    source = '(defn foo [print [y 1] #* rest]\n  (print y rest))\n(print "outside")\n'
+    index = build(source)
+
+    scoped_print = index.resolve(URI, "print", 1, 4)
+    assert scoped_print is not None
+    assert scoped_print.kind == SymbolKind.PARAMETER
+    assert scoped_print.detail == "parameter of foo"
+    assert scoped_print.source is not None
+    assert scoped_print.source.start_line == 0
+
+    y = index.resolve(URI, "y", 1, 10)
+    assert y is not None
+    assert y.kind == SymbolKind.PARAMETER
+
+    rest = index.resolve(URI, "rest", 1, 17)
+    assert rest is not None
+    assert rest.kind == SymbolKind.PARAMETER
+
+    outside_print = index.resolve(URI, "print", 2, 2)
+    assert outside_print is not None
+    assert outside_print.kind == SymbolKind.PYTHON_BUILTIN
+
+    completions = {symbol.name for symbol in index.symbols_for_completion(URI, "y", 1, 10)}
+    assert "y" in completions
+    assert "y" not in names(index, "y")
+
+
 def test_parse_diagnostic() -> None:
     document = WorkspaceIndex().update_document(URI, "(if True 1")
 

@@ -111,6 +111,7 @@ def _token_type_for_symbol(symbol: SymbolInfo) -> str:
         SymbolKind.READER_MACRO: "macro",
         SymbolKind.LOCAL_CLASS: "class",
         SymbolKind.LOCAL_VARIABLE: "variable",
+        SymbolKind.PARAMETER: "variable",
         SymbolKind.MODULE: "namespace",
     }.get(symbol.kind, "variable")
 
