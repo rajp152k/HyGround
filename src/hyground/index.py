@@ -62,11 +62,7 @@ class DocumentIndex:
         module: str = "",
     ) -> "DocumentIndex":
         index = cls(uri=uri, source=source, module=module)
-        try:
-            forms = list(hy.read_many(source, filename=uri))
-        except Exception as exc:  # Hy parse exceptions don't share a stable base type.
-            index.diagnostics.append(_diagnostic_from_exception(exc, source, code="hy-reader"))
-            return index
+        forms = index._read_forms(source)
 
         for form in forms:
             index._walk_form(form, resolver)
@@ -74,6 +70,15 @@ class DocumentIndex:
         if compile_forms:
             index._record_compile_diagnostics(forms, source, resolver)
         return index
+
+    def _read_forms(self, source: str) -> list[object]:
+        forms: list[object] = []
+        try:
+            for form in hy.read_many(source, filename=self.uri):
+                forms.append(form)
+        except Exception as exc:  # Hy parse exceptions don't share a stable base type.
+            self.diagnostics.append(_diagnostic_from_exception(exc, source, code="hy-reader"))
+        return forms
 
     def _record_compile_diagnostics(
         self,

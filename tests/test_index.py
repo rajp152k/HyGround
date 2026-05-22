@@ -79,6 +79,17 @@ def test_parse_diagnostic() -> None:
     assert diagnostic.end_character == 10
 
 
+def test_reader_recovery_indexes_complete_forms_before_error() -> None:
+    index = WorkspaceIndex()
+    document = index.update_document(URI, '(defn before-error []\n  "Before docs"\n  1)\n(if True 1')
+
+    assert document.diagnostics
+    before = index.resolve(URI, "before-error")
+    assert before is not None
+    assert before.documentation == "Before docs"
+    assert "before-error" in names(index, "before")
+
+
 def test_compile_diagnostic() -> None:
     document = WorkspaceIndex().update_document(URI, "(if True 1)\n")
 

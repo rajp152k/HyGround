@@ -357,6 +357,35 @@ json.du
         client.close()
 
 
+def test_lsp_preserves_symbols_before_reader_error(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text("[project]\nname = 'e2e-recovery'\n")
+    main = tmp_path / "main.hy"
+    source = '(defn before-error []\n  "Before docs"\n  1)\n(if True 1'
+    main.write_text(source)
+    uri = uris.from_fs_path(str(main))
+
+    client = LspClient(tmp_path)
+    try:
+        client.initialize(tmp_path)
+        client.did_open(uri, source)
+        diagnostics = client.wait_notification("textDocument/publishDiagnostics")
+        assert diagnostics["params"]["diagnostics"]
+
+        completion = client.request(
+            "textDocument/completion",
+            text_document_position(uri, source, "before-error", len("before")),
+        )
+        assert "before-error" in completion_labels(completion)
+
+        hover = client.request(
+            "textDocument/hover",
+            text_document_position(uri, source, "before-error", 2),
+        )
+        assert "Before docs" in hover["contents"]["value"]
+    finally:
+        client.close()
+
+
 def test_lsp_watched_file_change_refreshes_new_python_modules(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text("[project]\nname = 'e2e-watch'\n")
     main = tmp_path / "main.hy"
