@@ -35,7 +35,7 @@ pipx install hyground
 | --- | --- | --- |
 | `textDocument/completion` | supported | Hy forms, Python builtins, import/require-aware modules and members, dotted attributes, local/project Hy symbols |
 | `textDocument/hover` | supported | Python docs from `inspect`, local Hy docstrings, provisional Hy form docs |
-| `textDocument/definition` | supported | Local/project Hy definitions, Python source via `inspect`, typeshed fallback for builtins/C extensions |
+| `textDocument/definition` | supported | Local/project Hy definitions, module-aware Hy imports, Python source via `inspect`, typeshed fallback for builtins/C extensions |
 | `textDocument/documentSymbol` | supported | Definitions in the current Hy document |
 | `workspace/symbol` | supported | Indexed Hy definitions across the workspace |
 | `textDocument/references` | partial | Name-based references across indexed Hy files |
@@ -86,6 +86,8 @@ HyGround understands mixed `import` forms with module aliases, member lists, mem
 ```
 
 `require` indexing covers module aliases, selected macros, star macros, `:macros`, and `:readers` forms where the macro module can be imported from the workspace. Reader macros are represented as `#name` symbols internally.
+
+Project Hy imports are also tracked statically. For example, `(import lib :as L)` lets `L.helper` complete and jump to `lib.hy` without relying on a name-only project search.
 
 ## Reindexing
 
@@ -140,7 +142,7 @@ For an installed package, use:
 ## Architecture
 
 - `server.py`: pygls feature registration and LSP request handlers.
-- `index.py`: Hy document/workspace indexing.
+- `index.py`: Hy document/workspace indexing, module names, and static Hy import bindings.
 - `resolver.py`: workspace-scoped Python import, object, source, and stub resolution.
 - `model.py`: shared symbol and source range model.
 - `word.py`: token, range, occurrence, and call-site utilities.
@@ -173,7 +175,7 @@ examples/smoke.hy
 
 ## Known limitations
 
-- Hy project symbol lookup is currently name-based, not module-aware.
+- Hy project symbol lookup is module-aware for explicit `import` forms, but unqualified fallback lookup is still name-based.
 - References and rename are lexical/name-based and can produce false positives.
 - Diagnostics use coarse ranges for many Hy reader/compiler errors.
 - Python object resolution imports modules. A static resolver is needed for packages that are unsafe or expensive to import.
@@ -185,7 +187,7 @@ examples/smoke.hy
 Work required to move from the current implementation to production-grade tooling:
 
 1. Replace manual Hy core-form documentation with generated or upstream-provided documentation data.
-2. Make Hy symbol resolution module-aware, including imports, requires, aliases, and shadowing.
+2. Deepen Hy symbol resolution for lexical scopes, requires, aliases, and shadowing beyond explicit import bindings.
 3. Replace name-based references/rename with scoped symbol references.
 4. Improve diagnostics with precise ranges, stable error categories, and recovery for incomplete forms.
 5. Continue expanding context-aware completions for keywords, attributes, macros, and reader macros.

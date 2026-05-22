@@ -59,6 +59,7 @@ class SymbolInfo:
     signature: str = ""
     source: SourceRange | None = None
     runtime_object: Any | None = None
+    module: str = ""
 
     def hover_text(self) -> str:
         header = self.name
