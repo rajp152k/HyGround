@@ -39,3 +39,15 @@ def word_at(source: str, line: int, character: int) -> str:
     if not 0 <= line < len(lines):
         return ""
     return line_word_at(lines[line], character)
+
+
+def occurrences(source: str, name: str) -> list[tuple[int, int, int]]:
+    """Return ``(line, start, end)`` occurrences of NAME as a Hy word."""
+    if not name:
+        return []
+    out: list[tuple[int, int, int]] = []
+    for line_no, line in enumerate(source.splitlines()):
+        for match in WORD_RE.finditer(line):
+            if match.group(0) == name:
+                out.append((line_no, match.start(), match.end()))
+    return out

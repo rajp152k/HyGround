@@ -6,11 +6,27 @@ readme = "README.md"
 authors = [
     { name = "Raj", email = "rajp152k@gmail.com" }
 ]
+license = "MIT"
+keywords = ["hy", "hylang", "lsp", "language-server", "python"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Lisp",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Text Editors :: Integrated Development Environments (IDE)",
+]
 requires-python = ">=3.10"
 dependencies = [
     "hy>=1.2.0",
     "pygls>=1.3.1",
 ]
+
+[project.urls]
+Repository = "https://github.com/rajp152k/HyGround"
+Issues = "https://github.com/rajp152k/HyGround/issues"
 
 [project.scripts]
 hyground = "hyground.cli:main"
