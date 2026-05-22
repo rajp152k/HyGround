@@ -1,5 +1,6 @@
 (import pathlib [Path])
 (import os)
+(import json)
 
 (defn foo [x]
   "Foo docs from HyGround"
@@ -10,4 +11,5 @@
 (lfor x (range 5) x)
 (Path ".")
 os.pa
+(json.dumps {"x" 1})
 (foo bar)

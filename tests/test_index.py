@@ -65,7 +65,7 @@ def test_compile_diagnostic() -> None:
 
 
 def test_python_import_completion_hover_and_definition() -> None:
-    index = build("(import pathlib [Path])\n(import os)\n")
+    index = build("(import pathlib [Path])\n(import os)\n(import json)\n")
 
     assert "Path" in names(index, "Pa")
     path_info = index.resolve(URI, "Path")
@@ -76,6 +76,12 @@ def test_python_import_completion_hover_and_definition() -> None:
 
     attrs = {symbol.name for symbol in index.symbols_for_completion(URI, "os.pa")}
     assert "os.path" in attrs
+
+    dumps = index.resolve(URI, "json.dumps")
+    assert dumps is not None
+    assert "Serialize" in dumps.documentation
+    assert dumps.source is not None
+    assert "json" in dumps.source.uri
 
 
 def test_importable_module_completion() -> None:

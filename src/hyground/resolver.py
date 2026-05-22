@@ -8,6 +8,7 @@ rather than mutating a process-global search path permanently.
 from __future__ import annotations
 
 import importlib
+import importlib.util
 import inspect
 import pkgutil
 import sys
@@ -193,6 +194,27 @@ def _signature(obj: object) -> str:
 
 
 def _source_for_object(obj: object) -> SourceRange | None:
+    direct = _direct_source_for_object(obj)
+    if direct is not None:
+        return direct
+
+    if inspect.ismodule(obj):
+        return _source_for_module(obj)
+
+    module_name = getattr(obj, "__module__", None)
+    if isinstance(module_name, str):
+        module = sys.modules.get(module_name)
+        if module is None:
+            try:
+                module = importlib.import_module(module_name)
+            except Exception:
+                module = None
+        if module is not None:
+            return _source_for_module(module)
+    return None
+
+
+def _direct_source_for_object(obj: object) -> SourceRange | None:
     try:
         file_name = inspect.getsourcefile(obj) or inspect.getfile(obj)
     except (TypeError, OSError):
@@ -200,12 +222,53 @@ def _source_for_object(obj: object) -> SourceRange | None:
     if not file_name:
         return None
     path = Path(file_name)
-    if not path.exists():
+    if not path.exists() or path.suffix not in {".py", ".pyi", ".hy"}:
         return None
     try:
         _, line = inspect.getsourcelines(obj)
     except (OSError, TypeError):
         line = 1
+    return _range_for_path(path, line)
+
+
+def _source_for_module(module: ModuleType) -> SourceRange | None:
+    for candidate in (getattr(module, "__file__", None), getattr(getattr(module, "__spec__", None), "origin", None)):
+        if not candidate or candidate in {"built-in", "frozen", "namespace"}:
+            continue
+        path = Path(candidate)
+        if path.exists() and path.suffix in {".py", ".pyi", ".hy"}:
+            return _range_for_path(path, 1)
+
+    name = getattr(module, "__name__", None)
+    if isinstance(name, str):
+        stub = _find_stub_for_module(name)
+        if stub is not None:
+            return _range_for_path(stub, 1)
+    return None
+
+
+def _find_stub_for_module(module_name: str) -> Path | None:
+    module_path = Path(*module_name.split("."))
+    for base in map(Path, sys.path):
+        candidates = [
+            base / module_path.with_suffix(".pyi"),
+            base / module_path / "__init__.pyi",
+        ]
+        for candidate in candidates:
+            if candidate.exists():
+                return candidate
+    try:
+        spec = importlib.util.find_spec(module_name)
+    except (ImportError, ValueError):
+        spec = None
+    if spec and spec.origin:
+        origin = Path(spec.origin)
+        if origin.with_suffix(".pyi").exists():
+            return origin.with_suffix(".pyi")
+    return None
+
+
+def _range_for_path(path: Path, line: int) -> SourceRange:
     uri = uris.from_fs_path(str(path.resolve()))
     line0 = max(line - 1, 0)
     return SourceRange(uri=uri, start_line=line0, start_character=0, end_line=line0, end_character=0)
