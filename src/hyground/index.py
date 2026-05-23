@@ -705,7 +705,7 @@ class WorkspaceIndex:
         base_name, _, rest = name.partition(".")
         base = self.resolve(uri, base_name) if base_name != name else None
         if base is not None and base.kind == SymbolKind.MODULE and base.module:
-            static_symbol = self.resolver_for_root(self.root_for_uri(uri)).static_member_symbol(
+            static_symbol = self.resolver_for_root(self.root_for_uri(uri)).static_qualified_symbol(
                 name,
                 base.module,
                 rest,

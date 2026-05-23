@@ -204,6 +204,31 @@ class PythonResolver:
             symbols.append(resolved or symbol)
         return sorted(symbols, key=lambda symbol: symbol.name)
 
+    def static_qualified_symbol(self, visible_name: str, base_module: str, member_path: str) -> SymbolInfo | None:
+        """Resolve BASE_MODULE.member_path through static modules and members.
+
+        This supports common package layouts such as ``numpy.random.randn`` where
+        ``random`` is a submodule and ``randn`` is a member of that submodule.
+        """
+
+        parts = [part for part in member_path.split(".") if part]
+        if not parts:
+            return self.static_module_symbol(visible_name, base_module)
+
+        for split in range(len(parts), -1, -1):
+            module_suffix = ".".join(parts[:split])
+            candidate_module = f"{base_module}.{module_suffix}" if module_suffix else base_module
+            member = ".".join(parts[split:])
+            if not member:
+                module_symbol = self.static_module_symbol(visible_name, candidate_module)
+                if module_symbol is not None:
+                    return module_symbol
+                continue
+            symbol = self.static_member_symbol(visible_name, candidate_module, member)
+            if symbol is not None:
+                return symbol
+        return None
+
     def module_candidates(self, prefix: str) -> list[SymbolInfo]:
         """Return importable modules visible from this workspace."""
         if "." in prefix:
