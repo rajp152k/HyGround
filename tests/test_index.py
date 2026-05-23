@@ -304,6 +304,41 @@ def test_hy_module_alias_dotted_resolution_and_completion(tmp_path) -> None:
     assert "L.helper" in completions
 
 
+def test_uv_site_packages_static_fallback_when_runtime_import_fails(tmp_path) -> None:
+    root = tmp_path
+    main = root / "main.hy"
+    uri = uris.from_fs_path(str(main))
+    site_packages = root / ".venv" / "lib" / "python3.12" / "site-packages"
+    package = site_packages / "external_pkg"
+    package.mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (package / "__init__.py").write_text("import missing_external_pkg_extension\n")
+    (package / "__init__.pyi").write_text(
+        '"External package docs"\n'
+        "class DataFrame: ...\n"
+        "def read_csv(path: str) -> DataFrame: ...\n"
+        "from external_pkg.core import Series as Series\n"
+    )
+
+    index = WorkspaceIndex()
+    index.update_document(uri, "(import external-pkg :as xp)\nxp.read-csv\n")
+
+    module = index.resolve(uri, "xp")
+    assert module is not None
+    assert "External package docs" in module.documentation
+    assert module.source is not None
+    assert module.source.uri.endswith("external_pkg/__init__.pyi")
+
+    read_csv = index.resolve(uri, "xp.read-csv")
+    assert read_csv is not None
+    assert read_csv.signature == "(read-csv path: str) -> DataFrame"
+    assert read_csv.source is not None
+    assert read_csv.source.uri.endswith("external_pkg/__init__.pyi")
+
+    completions = {symbol.name for symbol in index.symbols_for_completion(uri, "xp.")}
+    assert {"xp.DataFrame", "xp.read-csv", "xp.Series"}.issubset(completions)
+
+
 def test_static_python_resolution_when_runtime_import_is_disabled(tmp_path) -> None:
     root = tmp_path
     main = root / "main.hy"

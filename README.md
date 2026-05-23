@@ -52,7 +52,9 @@ HyGround resolves Python objects using the current workspace root and common vir
 
 - project root
 - `.venv/lib/python*/site-packages`
-- `venv/lib/python*/site-packages`
+- `.venv/lib64/python*/site-packages`
+- `.venv/Lib/site-packages`
+- `venv` equivalents of those site-packages layouts
 
 Supported examples:
 
@@ -72,7 +74,7 @@ toolz.pipe
 
 Pure Python modules normally jump to their `.py` source. Builtin and C extension modules, such as `math` and `cmath`, do not expose Python implementation files; HyGround falls back to bundled typeshed `.pyi` stubs for these cases.
 
-When runtime importing is disabled or a workspace-local import fails, HyGround can statically parse workspace `.py`/`.pyi` files for top-level functions, classes, and variables. This keeps navigation and completion useful without executing module top-level code.
+When runtime importing is disabled or an import fails, HyGround can statically parse `.py`/`.pyi` files for top-level functions, classes, variables, and simple re-exports. Static fallback searches both workspace source and uv/venv site-packages, which keeps navigation and completion useful for packages with C extensions (for example NumPy/Pandas) even when the language server's Python ABI differs from the project `.venv`.
 
 Hy names are mapped to Python names when resolving imports and attributes:
 
