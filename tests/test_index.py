@@ -304,6 +304,53 @@ def test_hy_module_alias_dotted_resolution_and_completion(tmp_path) -> None:
     assert "L.helper" in completions
 
 
+def test_static_stub_symbols_are_enriched_with_implementation_docstrings(tmp_path) -> None:
+    root = tmp_path
+    main = root / "main.hy"
+    uri = uris.from_fs_path(str(main))
+    site_packages = root / ".venv" / "lib" / "python3.12" / "site-packages"
+    package = site_packages / "doc_pkg"
+    package.mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (package / "__init__.pyi").write_text(
+        "def load(path: str) -> Model: ...\n"
+        "from .core import Model as Model\n"
+    )
+    (package / "__init__.py").write_text(
+        '"Implementation module docs"\n'
+        "def load(path):\n"
+        "    \"Load docs from implementation.\"\n"
+        "    raise RuntimeError\n"
+        "import missing_binary_extension\n"
+    )
+    (package / "core.pyi").write_text("class Model: ...\n")
+    (package / "core.py").write_text(
+        "class Model:\n"
+        "    \"Model docs from implementation.\"\n"
+        "    pass\n"
+    )
+
+    index = WorkspaceIndex()
+    index.update_document(uri, "(import doc-pkg :as dp)\ndp.load\ndp.Model\n")
+
+    module = index.resolve(uri, "dp")
+    assert module is not None
+    assert module.documentation == "Implementation module docs"
+
+    load = index.resolve(uri, "dp.load")
+    assert load is not None
+    assert load.signature == "(load path: str) -> Model"
+    assert load.documentation == "Load docs from implementation."
+    assert load.source is not None
+    assert load.source.uri.endswith("doc_pkg/__init__.pyi")
+
+    model = index.resolve(uri, "dp.Model")
+    assert model is not None
+    assert model.documentation == "Model docs from implementation."
+    assert model.source is not None
+    assert model.source.uri.endswith("doc_pkg/core.pyi")
+
+
 def test_uv_site_packages_static_fallback_when_runtime_import_fails(tmp_path) -> None:
     root = tmp_path
     main = root / "main.hy"
