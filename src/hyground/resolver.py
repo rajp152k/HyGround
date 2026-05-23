@@ -42,6 +42,7 @@ class PythonResolver:
         self.root = root
         self.config = config or HyGroundConfig()
         self.search_paths = _search_paths(root, include_root=self.config.allow_workspace_imports)
+        self.static_search_paths = _static_search_paths(root)
         self._module_cache: dict[str, ModuleType | None] = {}
         self._object_cache: dict[str, object | None] = {}
         self._static_module_cache: dict[str, StaticPythonModule | None] = {}
@@ -158,7 +159,7 @@ class PythonResolver:
     def static_module(self, module_name: str) -> StaticPythonModule | None:
         python_module_name = _python_qualified_name(module_name)
         if python_module_name not in self._static_module_cache:
-            self._static_module_cache[python_module_name] = load_static_python_module(self.root, module_name)
+            self._static_module_cache[python_module_name] = load_static_python_module(self.static_search_paths, module_name)
         return self._static_module_cache[python_module_name]
 
     def static_module_symbol(self, visible_name: str, module_name: str) -> SymbolInfo | None:
@@ -209,18 +210,19 @@ class PythonResolver:
 
     def static_top_level_modules(self, prefix: str = "") -> list[str]:
         seen: set[str] = set()
-        try:
-            children = list(self.root.iterdir())
-        except OSError:
-            return []
-        for child in children:
-            name = ""
-            if child.is_file() and child.suffix in {".py", ".pyi"} and child.stem != "__init__":
-                name = hy.unmangle(child.stem)
-            elif child.is_dir() and any((child / init).exists() for init in ("__init__.py", "__init__.pyi")):
-                name = hy.unmangle(child.name)
-            if name and not name.startswith("_") and name.startswith(prefix):
-                seen.add(name)
+        for root in self.static_search_paths:
+            try:
+                children = list(root.iterdir())
+            except OSError:
+                continue
+            for child in children:
+                name = ""
+                if child.is_file() and child.suffix in {".py", ".pyi"} and child.stem != "__init__":
+                    name = hy.unmangle(child.stem)
+                elif child.is_dir() and any((child / init).exists() for init in ("__init__.py", "__init__.pyi")):
+                    name = hy.unmangle(child.name)
+                if name and not name.startswith("_") and name.startswith(prefix):
+                    seen.add(name)
         return sorted(seen)
 
     def _dotted_module_candidates(self, prefix: str) -> list[SymbolInfo]:
@@ -424,14 +426,37 @@ def iter_hy_files(
 
 def _search_paths(root: Path, include_root: bool = True) -> list[Path]:
     paths = [root] if include_root else []
+    paths.extend(_venv_site_packages(root))
+    return _dedupe_paths(paths)
+
+
+def _static_search_paths(root: Path) -> list[Path]:
+    return _dedupe_paths([root, *_venv_site_packages(root)])
+
+
+def _venv_site_packages(root: Path) -> list[Path]:
+    paths: list[Path] = []
     for venv_name in (".venv", "venv"):
-        lib = root / venv_name / "lib"
-        if not lib.exists():
-            continue
-        for site_packages in lib.glob("python*/site-packages"):
-            if site_packages.exists():
-                paths.append(site_packages)
+        venv = root / venv_name
+        for lib_name in ("lib", "lib64"):
+            lib = venv / lib_name
+            if lib.exists():
+                paths.extend(path for path in lib.glob("python*/site-packages") if path.exists())
+        windows_site = venv / "Lib" / "site-packages"
+        if windows_site.exists():
+            paths.append(windows_site)
     return paths
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for path in paths:
+        resolved = path.resolve()
+        if resolved not in seen:
+            seen.add(resolved)
+            out.append(resolved)
+    return out
 
 
 def _python_qualified_name(name: str) -> str:

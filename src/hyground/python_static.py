@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 from dataclasses import dataclass
+from collections.abc import Sequence
 from pathlib import Path
 
 import hy
@@ -20,10 +21,10 @@ class StaticPythonModule:
     symbols: dict[str, SymbolInfo] | None = None
 
 
-def load_static_python_module(root: Path, module_name: str) -> StaticPythonModule | None:
-    """Parse a workspace Python module without importing it."""
+def load_static_python_module(roots: Path | Sequence[Path], module_name: str) -> StaticPythonModule | None:
+    """Parse a Python module from ROOTS without importing it."""
 
-    path = find_python_module_path(root, module_name)
+    path = find_python_module_path(roots, module_name)
     if path is None:
         return None
     try:
@@ -35,8 +36,7 @@ def load_static_python_module(root: Path, module_name: str) -> StaticPythonModul
     symbols: dict[str, SymbolInfo] = {}
     uri = uris.from_fs_path(str(path.resolve()))
     for node in tree.body:
-        symbol = _symbol_from_node(uri, module_name, node)
-        if symbol is not None:
+        for symbol in _symbols_from_node(uri, module_name, node):
             symbols[symbol.name] = symbol
 
     return StaticPythonModule(
@@ -47,18 +47,20 @@ def load_static_python_module(root: Path, module_name: str) -> StaticPythonModul
     )
 
 
-def find_python_module_path(root: Path, module_name: str) -> Path | None:
+def find_python_module_path(roots: Path | Sequence[Path], module_name: str) -> Path | None:
     python_module = _python_qualified_name(module_name)
-    module_path = root.joinpath(*python_module.split("."))
-    candidates = [
-        module_path.with_suffix(".py"),
-        module_path.with_suffix(".pyi"),
-        module_path / "__init__.py",
-        module_path / "__init__.pyi",
-    ]
-    for candidate in candidates:
-        if candidate.exists() and candidate.is_file():
-            return candidate.resolve()
+    search_roots = [roots] if isinstance(roots, Path) else list(roots)
+    for root in search_roots:
+        module_path = root.joinpath(*python_module.split("."))
+        candidates = [
+            module_path.with_suffix(".pyi"),
+            module_path / "__init__.pyi",
+            module_path.with_suffix(".py"),
+            module_path / "__init__.py",
+        ]
+        for candidate in candidates:
+            if candidate.exists() and candidate.is_file():
+                return candidate.resolve()
     return None
 
 
@@ -123,10 +125,10 @@ def member_symbols_from_static_module(
     return sorted(out, key=lambda symbol: symbol.name)
 
 
-def _symbol_from_node(uri: str, module_name: str, node: ast.AST) -> SymbolInfo | None:
+def _symbols_from_node(uri: str, module_name: str, node: ast.AST) -> list[SymbolInfo]:
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         name = hy.unmangle(node.name)
-        return SymbolInfo(
+        return [SymbolInfo(
             name=name,
             kind=SymbolKind.LOCAL_FUNCTION,
             detail=f"Python function {module_name}.{node.name} (static)",
@@ -134,13 +136,13 @@ def _symbol_from_node(uri: str, module_name: str, node: ast.AST) -> SymbolInfo |
             documentation=ast.get_docstring(node) or "",
             source=_range_for_node(uri, node),
             module=module_name,
-        )
+        )]
 
     if isinstance(node, ast.ClassDef):
         name = hy.unmangle(node.name)
         bases = ", ".join(_unparse(base) for base in node.bases)
         signature = f"class {name}({bases})" if bases else f"class {name}"
-        return SymbolInfo(
+        return [SymbolInfo(
             name=name,
             kind=SymbolKind.LOCAL_CLASS,
             detail=f"Python class {module_name}.{node.name} (static)",
@@ -148,18 +150,51 @@ def _symbol_from_node(uri: str, module_name: str, node: ast.AST) -> SymbolInfo |
             documentation=ast.get_docstring(node) or "",
             source=_range_for_node(uri, node),
             module=module_name,
-        )
+        )]
 
     if isinstance(node, ast.Assign):
+        out: list[SymbolInfo] = []
         for target in node.targets:
             symbol = _symbol_from_assignment_target(uri, module_name, target)
             if symbol is not None:
-                return symbol
+                out.append(symbol)
+        return out
 
     if isinstance(node, ast.AnnAssign):
-        return _symbol_from_assignment_target(uri, module_name, node.target, node.annotation)
+        symbol = _symbol_from_assignment_target(uri, module_name, node.target, node.annotation)
+        return [] if symbol is None else [symbol]
 
-    return None
+    if isinstance(node, ast.Import):
+        return [_symbol_from_import_alias(uri, module_name, node, alias) for alias in node.names]
+
+    if isinstance(node, ast.ImportFrom):
+        return [
+            _symbol_from_import_alias(uri, module_name, node, alias, from_module=node.module)
+            for alias in node.names
+            if alias.name != "*"
+        ]
+
+    return []
+
+
+def _symbol_from_import_alias(
+    uri: str,
+    module_name: str,
+    node: ast.AST,
+    alias: ast.alias,
+    from_module: str | None = None,
+) -> SymbolInfo:
+    visible = alias.asname or alias.name.split(".", 1)[0]
+    hy_name = hy.unmangle(visible)
+    imported = f"{from_module}.{alias.name}" if from_module else alias.name
+    return SymbolInfo(
+        name=hy_name,
+        kind=SymbolKind.UNKNOWN,
+        detail=f"Python import {imported} (static)",
+        documentation=f"Imported `{imported}` in `{module_name}`.",
+        source=_range_for_node(uri, node),
+        module=module_name,
+    )
 
 
 def _symbol_from_assignment_target(
