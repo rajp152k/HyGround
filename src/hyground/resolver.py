@@ -169,16 +169,40 @@ class PythonResolver:
         return module_symbol_from_static_module(module, visible_name)
 
     def static_member_symbol(self, visible_name: str, module_name: str, member_name: str) -> SymbolInfo | None:
+        return self._static_member_symbol(visible_name, module_name, member_name, seen=set())
+
+    def _static_member_symbol(
+        self,
+        visible_name: str,
+        module_name: str,
+        member_name: str,
+        seen: set[tuple[str, str]],
+    ) -> SymbolInfo | None:
+        key = (module_name, member_name)
+        if key in seen:
+            return None
+        seen.add(key)
         module = self.static_module(module_name)
         if module is None:
             return None
+        re_export = (module.re_exports or {}).get(member_name) or (module.re_exports or {}).get(hy.unmangle(hy.mangle(member_name)))
+        if re_export is not None:
+            target_module, target_member = re_export
+            target = self._static_member_symbol(visible_name, target_module, target_member, seen)
+            if target is not None:
+                return target
         return member_symbol_from_static_module(module, visible_name, member_name)
 
     def static_member_symbols(self, module_name: str, prefix: str = "", visible_base: str = "") -> list[SymbolInfo]:
         module = self.static_module(module_name)
         if module is None:
             return []
-        return member_symbols_from_static_module(module, prefix, visible_base)
+        symbols: list[SymbolInfo] = []
+        for symbol in member_symbols_from_static_module(module, prefix, visible_base):
+            original_name = symbol.name.rsplit(".", 1)[-1]
+            resolved = self.static_member_symbol(symbol.name, module_name, original_name)
+            symbols.append(resolved or symbol)
+        return sorted(symbols, key=lambda symbol: symbol.name)
 
     def module_candidates(self, prefix: str) -> list[SymbolInfo]:
         """Return importable modules visible from this workspace."""

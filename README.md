@@ -74,7 +74,7 @@ toolz.pipe
 
 Pure Python modules normally jump to their `.py` source. Builtin and C extension modules, such as `math` and `cmath`, do not expose Python implementation files; HyGround falls back to bundled typeshed `.pyi` stubs for these cases.
 
-When runtime importing is disabled or an import fails, HyGround can statically parse `.py`/`.pyi` files for top-level functions, classes, variables, and simple re-exports. Static fallback searches both workspace source and uv/venv site-packages, which keeps navigation and completion useful for packages with C extensions (for example NumPy/Pandas) even when the language server's Python ABI differs from the project `.venv`.
+When runtime importing is disabled or an import fails, HyGround can statically parse `.py`/`.pyi` files for top-level functions, classes, variables, and simple re-exports. Static fallback searches both workspace source and uv/venv site-packages, prefers `.pyi` for safe signatures, and enriches missing stub docstrings from matching `.py` implementation files. This keeps navigation, completion, and hover documentation useful for packages with C extensions (for example NumPy/Pandas) even when the language server's Python ABI differs from the project `.venv`.
 
 Hy names are mapped to Python names when resolving imports and attributes:
 

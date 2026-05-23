@@ -19,6 +19,7 @@ class StaticPythonModule:
     path: Path
     documentation: str = ""
     symbols: dict[str, SymbolInfo] | None = None
+    re_exports: dict[str, tuple[str, str]] | None = None
 
 
 def load_static_python_module(roots: Path | Sequence[Path], module_name: str) -> StaticPythonModule | None:
@@ -33,17 +34,22 @@ def load_static_python_module(roots: Path | Sequence[Path], module_name: str) ->
     except (OSError, SyntaxError, UnicodeDecodeError):
         return None
 
-    symbols: dict[str, SymbolInfo] = {}
-    uri = uris.from_fs_path(str(path.resolve()))
-    for node in tree.body:
-        for symbol in _symbols_from_node(uri, module_name, node):
-            symbols[symbol.name] = symbol
+    symbols, re_exports = _module_symbols_and_re_exports(path, module_name, tree)
+    documentation = ast.get_docstring(tree) or ""
+
+    companion_tree = _parse_companion_implementation(path)
+    if companion_tree is not None:
+        companion_symbols, companion_re_exports = _module_symbols_and_re_exports(path.with_suffix(".py"), module_name, companion_tree)
+        documentation = documentation or ast.get_docstring(companion_tree) or ""
+        symbols = _merge_symbol_docs(symbols, companion_symbols)
+        re_exports = {**companion_re_exports, **re_exports}
 
     return StaticPythonModule(
         module=module_name,
         path=path,
-        documentation=ast.get_docstring(tree) or "",
+        documentation=documentation,
         symbols=symbols,
+        re_exports=re_exports,
     )
 
 
@@ -62,6 +68,48 @@ def find_python_module_path(roots: Path | Sequence[Path], module_name: str) -> P
             if candidate.exists() and candidate.is_file():
                 return candidate.resolve()
     return None
+
+
+def _module_symbols_and_re_exports(
+    path: Path,
+    module_name: str,
+    tree: ast.Module,
+) -> tuple[dict[str, SymbolInfo], dict[str, tuple[str, str]]]:
+    symbols: dict[str, SymbolInfo] = {}
+    re_exports: dict[str, tuple[str, str]] = {}
+    uri = uris.from_fs_path(str(path.resolve()))
+    is_package = path.stem == "__init__"
+    for node in tree.body:
+        for symbol in _symbols_from_node(uri, module_name, node, is_package=is_package):
+            symbols[symbol.name] = symbol
+        re_exports.update(_re_exports_from_node(module_name, node, is_package=is_package))
+    return symbols, re_exports
+
+
+def _parse_companion_implementation(path: Path) -> ast.Module | None:
+    if path.suffix != ".pyi":
+        return None
+    companion = path.with_suffix(".py")
+    if not companion.exists():
+        return None
+    try:
+        return ast.parse(companion.read_text(encoding="utf-8"), filename=str(companion))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return None
+
+
+def _merge_symbol_docs(
+    primary: dict[str, SymbolInfo],
+    docs: dict[str, SymbolInfo],
+) -> dict[str, SymbolInfo]:
+    merged = dict(primary)
+    for name, doc_symbol in docs.items():
+        existing = merged.get(name)
+        if existing is None:
+            merged[name] = doc_symbol
+        elif not existing.documentation and doc_symbol.documentation:
+            merged[name] = _replace_symbol_documentation(existing, doc_symbol.documentation)
+    return merged
 
 
 def module_symbol(root: Path, visible_name: str, module_name: str) -> SymbolInfo | None:
@@ -125,7 +173,12 @@ def member_symbols_from_static_module(
     return sorted(out, key=lambda symbol: symbol.name)
 
 
-def _symbols_from_node(uri: str, module_name: str, node: ast.AST) -> list[SymbolInfo]:
+def _symbols_from_node(
+    uri: str,
+    module_name: str,
+    node: ast.AST,
+    is_package: bool = False,
+) -> list[SymbolInfo]:
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
         name = hy.unmangle(node.name)
         return [SymbolInfo(
@@ -168,13 +221,45 @@ def _symbols_from_node(uri: str, module_name: str, node: ast.AST) -> list[Symbol
         return [_symbol_from_import_alias(uri, module_name, node, alias) for alias in node.names]
 
     if isinstance(node, ast.ImportFrom):
+        from_module = _absolute_import_from_module(module_name, node, is_package)
         return [
-            _symbol_from_import_alias(uri, module_name, node, alias, from_module=node.module)
+            _symbol_from_import_alias(uri, module_name, node, alias, from_module=from_module)
             for alias in node.names
             if alias.name != "*"
         ]
 
     return []
+
+
+def _re_exports_from_node(
+    module_name: str,
+    node: ast.AST,
+    is_package: bool = False,
+) -> dict[str, tuple[str, str]]:
+    if not isinstance(node, ast.ImportFrom):
+        return {}
+    from_module = _absolute_import_from_module(module_name, node, is_package)
+    if not from_module:
+        return {}
+    out: dict[str, tuple[str, str]] = {}
+    for alias in node.names:
+        if alias.name == "*":
+            continue
+        visible = alias.asname or alias.name
+        out[hy.unmangle(visible)] = (from_module, hy.unmangle(alias.name))
+    return out
+
+
+def _absolute_import_from_module(module_name: str, node: ast.ImportFrom, is_package: bool = False) -> str | None:
+    if node.level == 0:
+        return node.module
+    parts = module_name.split(".")
+    base = parts if is_package else parts[:-1]
+    if node.level > 1:
+        base = base[: -(node.level - 1)] if node.level - 1 <= len(base) else []
+    if node.module:
+        base = [*base, *node.module.split(".")]
+    return ".".join(part for part in base if part)
 
 
 def _symbol_from_import_alias(
@@ -276,6 +361,19 @@ def _with_visible_name(symbol: SymbolInfo, visible_name: str) -> SymbolInfo:
         kind=symbol.kind,
         detail=symbol.detail,
         documentation=symbol.documentation,
+        signature=symbol.signature,
+        source=symbol.source,
+        runtime_object=symbol.runtime_object,
+        module=symbol.module,
+    )
+
+
+def _replace_symbol_documentation(symbol: SymbolInfo, documentation: str) -> SymbolInfo:
+    return SymbolInfo(
+        name=symbol.name,
+        kind=symbol.kind,
+        detail=symbol.detail,
+        documentation=documentation,
         signature=symbol.signature,
         source=symbol.source,
         runtime_object=symbol.runtime_object,
