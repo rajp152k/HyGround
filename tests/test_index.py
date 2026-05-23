@@ -304,6 +304,44 @@ def test_hy_module_alias_dotted_resolution_and_completion(tmp_path) -> None:
     assert "L.helper" in completions
 
 
+def test_nested_static_package_submodule_resolution(tmp_path) -> None:
+    root = tmp_path
+    main = root / "main.hy"
+    uri = uris.from_fs_path(str(main))
+    site_packages = root / ".venv" / "lib" / "python3.12" / "site-packages"
+    package = site_packages / "array_pkg"
+    random_package = package / "random"
+    random_package.mkdir(parents=True)
+    (root / "pyproject.toml").write_text("[project]\nname = 'x'\n")
+    (package / "__init__.py").write_text("import missing_binary_extension\n")
+    (package / "__init__.pyi").write_text('"Array package docs"\n')
+    (random_package / "__init__.pyi").write_text("def randn(*shape: int) -> ndarray: ...\n")
+    (random_package / "__init__.py").write_text(
+        "def randn(*shape):\n"
+        "    \"Random normal samples.\"\n"
+        "    raise RuntimeError\n"
+    )
+
+    index = WorkspaceIndex()
+    index.update_document(uri, "(import array-pkg :as np)\nnp.random.randn\n")
+
+    random_module = index.resolve(uri, "np.random")
+    assert random_module is not None
+    assert random_module.kind == SymbolKind.MODULE
+    assert random_module.source is not None
+    assert random_module.source.uri.endswith("array_pkg/random/__init__.pyi")
+
+    randn = index.resolve(uri, "np.random.randn")
+    assert randn is not None
+    assert randn.signature == "(randn *shape: int) -> ndarray"
+    assert randn.documentation == "Random normal samples."
+    assert randn.source is not None
+    assert randn.source.uri.endswith("array_pkg/random/__init__.pyi")
+
+    completions = {symbol.name for symbol in index.symbols_for_completion(uri, "np.random.ra")}
+    assert "np.random.randn" in completions
+
+
 def test_static_stub_symbols_are_enriched_with_implementation_docstrings(tmp_path) -> None:
     root = tmp_path
     main = root / "main.hy"
