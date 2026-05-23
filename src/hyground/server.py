@@ -9,11 +9,10 @@ from . import __version__
 from .completion_context import CompletionContext, completion_context
 from .folding import folding_ranges
 from .index import DocumentIndex, WorkspaceIndex
+from .lsp_runtime import REINDEX_COMMAND, register_lsp_specs
 from .model import SymbolInfo, SymbolKind
-from .semantic import SEMANTIC_TOKEN_MODIFIERS, SEMANTIC_TOKEN_TYPES, encode_semantic_tokens, semantic_tokens
+from .semantic import encode_semantic_tokens, semantic_tokens
 from .word import enclosing_call, occurrences, word_at, word_prefix, word_range_at
-
-REINDEX_COMMAND = "hyground.reindexWorkspace"
 
 
 class HyGroundServer(LanguageServer):
@@ -31,19 +30,16 @@ def make_server() -> HyGroundServer:
 
 
 def _register_features(server: HyGroundServer) -> None:
-    @server.feature(lsp.TEXT_DOCUMENT_DID_OPEN)
     def did_open(params: lsp.DidOpenTextDocumentParams) -> None:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
         _index_and_publish(server, uri, document.source)
 
-    @server.feature(lsp.TEXT_DOCUMENT_DID_CHANGE)
     def did_change(params: lsp.DidChangeTextDocumentParams) -> None:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
         _index_and_publish(server, uri, document.source)
 
-    @server.feature(lsp.TEXT_DOCUMENT_DID_CLOSE)
     def did_close(params: lsp.DidCloseTextDocumentParams) -> None:
         uri = params.text_document.uri
         server.index.remove_document(uri)
@@ -51,7 +47,6 @@ def _register_features(server: HyGroundServer) -> None:
             lsp.PublishDiagnosticsParams(uri=uri, diagnostics=[])
         )
 
-    @server.feature(lsp.WORKSPACE_DID_CHANGE_WATCHED_FILES)
     def did_change_watched_files(params: lsp.DidChangeWatchedFilesParams) -> None:
         roots = {
             server.index.root_for_uri(change.uri)
@@ -61,10 +56,6 @@ def _register_features(server: HyGroundServer) -> None:
         for root in roots:
             _reindex_root_and_publish(server, root)
 
-    @server.feature(
-        lsp.TEXT_DOCUMENT_COMPLETION,
-        lsp.CompletionOptions(trigger_characters=[".", " ", "-", "_", ":", "[", "#"]),
-    )
     def completion(params: lsp.CompletionParams) -> lsp.CompletionList:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
@@ -83,7 +74,6 @@ def _register_features(server: HyGroundServer) -> None:
         ]
         return lsp.CompletionList(is_incomplete=False, items=items)
 
-    @server.feature(lsp.TEXT_DOCUMENT_HOVER)
     def hover(params: lsp.HoverParams) -> lsp.Hover | None:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
@@ -97,7 +87,6 @@ def _register_features(server: HyGroundServer) -> None:
             contents=lsp.MarkupContent(kind=lsp.MarkupKind.Markdown, value=_hover_markdown(symbol))
         )
 
-    @server.feature(lsp.TEXT_DOCUMENT_DEFINITION)
     def definition(params: lsp.DefinitionParams) -> list[lsp.Location] | None:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
@@ -109,20 +98,12 @@ def _register_features(server: HyGroundServer) -> None:
             return None
         return [symbol.source.to_location()]
 
-    @server.feature(
-        lsp.TEXT_DOCUMENT_SEMANTIC_TOKENS_FULL,
-        lsp.SemanticTokensLegend(
-            token_types=SEMANTIC_TOKEN_TYPES,
-            token_modifiers=SEMANTIC_TOKEN_MODIFIERS,
-        ),
-    )
     def semantic_tokens_full(params: lsp.SemanticTokensParams) -> lsp.SemanticTokens:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
         tokens = semantic_tokens(document.source, lambda name, line, character: server.index.resolve(uri, name, line, character))
         return lsp.SemanticTokens(data=encode_semantic_tokens(tokens))
 
-    @server.feature(lsp.TEXT_DOCUMENT_FOLDING_RANGE)
     def folding_range(params: lsp.FoldingRangeParams) -> list[lsp.FoldingRange]:
         document = server.workspace.get_text_document(params.text_document.uri)
         return [
@@ -135,7 +116,6 @@ def _register_features(server: HyGroundServer) -> None:
             for fold in folding_ranges(document.source)
         ]
 
-    @server.feature(lsp.TEXT_DOCUMENT_DOCUMENT_SYMBOL)
     def document_symbol(params: lsp.DocumentSymbolParams) -> list[lsp.DocumentSymbol]:
         uri = params.text_document.uri
         document = server.index.documents.get(uri)
@@ -158,7 +138,6 @@ def _register_features(server: HyGroundServer) -> None:
             )
         return symbols
 
-    @server.feature(lsp.WORKSPACE_SYMBOL, lsp.WorkspaceSymbolOptions(resolve_provider=False))
     def workspace_symbol(params: lsp.WorkspaceSymbolParams) -> list[lsp.SymbolInformation]:
         query = params.query.lower()
         out: list[lsp.SymbolInformation] = []
@@ -188,7 +167,6 @@ def _register_features(server: HyGroundServer) -> None:
                 )
         return sorted(out, key=lambda symbol: symbol.name)
 
-    @server.feature(lsp.TEXT_DOCUMENT_REFERENCES)
     def references(params: lsp.ReferenceParams) -> list[lsp.Location]:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
@@ -199,7 +177,6 @@ def _register_features(server: HyGroundServer) -> None:
         include_declaration = params.context.include_declaration if params.context else True
         return _reference_locations(server, uri, name, symbol, include_declaration=include_declaration)
 
-    @server.feature(lsp.TEXT_DOCUMENT_PREPARE_RENAME)
     def prepare_rename(params: lsp.PrepareRenameParams) -> lsp.Range | None:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
@@ -214,7 +191,6 @@ def _register_features(server: HyGroundServer) -> None:
             end=lsp.Position(line=params.position.line, character=end),
         )
 
-    @server.feature(lsp.TEXT_DOCUMENT_RENAME, lsp.RenameOptions(prepare_provider=True))
     def rename(params: lsp.RenameParams) -> lsp.WorkspaceEdit | None:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
@@ -236,10 +212,6 @@ def _register_features(server: HyGroundServer) -> None:
             )
         return lsp.WorkspaceEdit(changes=changes)
 
-    @server.feature(
-        lsp.TEXT_DOCUMENT_SIGNATURE_HELP,
-        lsp.SignatureHelpOptions(trigger_characters=[" ", "("])
-    )
     def signature_help(params: lsp.SignatureHelpParams) -> lsp.SignatureHelp | None:
         uri = params.text_document.uri
         document = server.workspace.get_text_document(uri)
@@ -264,7 +236,6 @@ def _register_features(server: HyGroundServer) -> None:
             active_parameter=active_parameter,
         )
 
-    @server.command(REINDEX_COMMAND)
     def reindex_workspace(ls: HyGroundServer, uri: str | None = None) -> dict[str, object]:
         target_uri = uri or next(iter(ls.workspace.text_documents), None) or ls.workspace.root_uri
         if target_uri is None:
@@ -278,6 +249,8 @@ def _register_features(server: HyGroundServer) -> None:
             lsp.ShowMessageParams(type=lsp.MessageType.Info, message=message)
         )
         return {"ok": True, "root": str(root), "documents": len(ls.index.documents)}
+
+    register_lsp_specs(server, locals())
 
 
 def _reference_locations(
